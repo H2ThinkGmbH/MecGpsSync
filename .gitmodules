@@ -1,0 +1,3 @@
+[submodule "QClientCSharp.git"]
+	path = QClientCSharp
+	url = https://github.com/Mecalc/QClientCSharp.git
