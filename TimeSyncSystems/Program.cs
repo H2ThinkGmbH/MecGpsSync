@@ -37,13 +37,20 @@ if (pingResponse == null || pingResponse.Code < 0)
 var system1Time = system1RestfulInterface.Get<SystemTime>(EndPoints.SystemTime);
 var system2Time = system2RestfulInterface.Get<SystemTime>(EndPoints.SystemTime);
 var timeDifference = CheckTimeDifference(system1Time, system2Time);
-if (timeDifference > 1)
+if (timeDifference > 0)
 {
     var time = SystemTime.GetPresentTime();
-    system1RestfulInterface.Put(EndPoints.SystemTime, time);
-    system2RestfulInterface.Put(EndPoints.SystemTime, time);
-    Console.WriteLine("Please reboot both system and wait for the booting process to complete. Press any key to continue.");
+    var setTimeTask1 = Task.Factory.StartNew(() => system1RestfulInterface.Put(EndPoints.SystemTime, time));
+    var setTimeTask2 = Task.Factory.StartNew(() => system2RestfulInterface.Put(EndPoints.SystemTime, time));
+    Console.WriteLine($"Time difference was {timeDifference} s, it was reset hence reboot both system and run the application again.");
     Console.ReadKey();
+
+    while (setTimeTask1.IsCompleted == false && setTimeTask2.IsCompleted == false)
+    {
+        Thread.Sleep(1);
+    }
+
+    Environment.Exit(0);
 }
 
 // Do a standard configuration.
@@ -128,8 +135,12 @@ foreach (var channel in system2Channels)
     channel.PutItemSettings(channelSettings);
 }
 
-system1RestfulInterface.Put(EndPoints.SystemSettingsApply);
-system2RestfulInterface.Put(EndPoints.SystemSettingsApply);
+var applyTask1 = Task.Factory.StartNew(() => system1RestfulInterface.Put(EndPoints.SystemSettingsApply));
+var applyTask2 = Task.Factory.StartNew(() => system2RestfulInterface.Put(EndPoints.SystemSettingsApply));
+while (applyTask1.IsCompleted == false && applyTask2.IsCompleted == false)
+{
+    Thread.Sleep(1);
+}
 
 // Open a socket to each system
 // This will initiate the data transfer from the system to our application.
@@ -171,67 +182,71 @@ var syncPackets = system2Streamer.AnalogDataPackets
                                  .Where(packet => packet.GenericChannelHeader.ChannelId == syncChannelId.ItemId)
                                  .ToList();
 
-var activityTimeStamp = 0ul;
-var referenceSampleList = new List<float>();
-//for (int index = 0; index < referencePackets.Count; index++)
-//{
-//    var packet = referencePackets[index];
-//    if (packet.AnalogChannelHeader.Max < 0.1)
-//    {
-//        continue;
-//    }
+var referenceTimestamp = 0ul;
+for (int index = 0; index < referencePackets.Count; index++)
+{
+    var packet = referencePackets[index];
+    if (packet.AnalogChannelHeader.Max < 0.1)
+    {
+        continue;
+    }
 
-//    // Found a peak, save a few blocks of data.
-//    index--;
-//    activityTimeStamp = packet.GenericChannelHeader.Timestamp;
-//    var stopIndex = index + 32;
-//    if (referencePackets.Count < stopIndex)
-//    {
-//        stopIndex = referencePackets.Count;
-//    }
+    referenceTimestamp = packet.GenericChannelHeader.Timestamp;
+    break;
+}
 
-//    for (; index < stopIndex; index++)
-//    {
-//        referenceSampleList.AddRange(referencePackets[index].SampleList);
-//    }
+var syncTimestamp = 0ul;
+for (int index = 0; index < syncPackets.Count; index++)
+{
+    var packet = syncPackets[index];
+    if (packet.AnalogChannelHeader.Max < 0.1)
+    {
+        continue;
+    }
 
-//    break;
-//}
+    syncTimestamp = packet.GenericChannelHeader.Timestamp;
+    break;
+}
 
-referenceSampleList = referencePackets.SelectMany(packet => packet.SampleList)
-                                      .ToList();
+var startTimestamp = referenceTimestamp < syncTimestamp ? referenceTimestamp : syncTimestamp;
+var stopTimestamp = referenceTimestamp > syncTimestamp ? referenceTimestamp : syncTimestamp;
 
-// Now find the same timestamp in system 2, and save the block of data.
-var syncSampleList = new List<float>();
-//for (int index = 0; index < syncPackets.Count; index++)
-//{
-//    if (syncPackets[index].GenericChannelHeader.Timestamp == activityTimeStamp)
-//    {
-//        var stopIndex = index + 32;
-//        if (syncPackets.Count < stopIndex)
-//        {
-//            stopIndex = syncPackets.Count;
-//        }
+var referenceHasStartStamp = referencePackets.First().GenericChannelHeader.Timestamp < startTimestamp;
+var syncHasStartStamp = syncPackets.First().GenericChannelHeader.Timestamp < startTimestamp;
+if (referenceHasStartStamp == false || syncHasStartStamp == false) 
+{
+    throw new IndexOutOfRangeException("The start timestamp does not exist for both packet lists");
+}
 
-//        for (; index < stopIndex; index++)
-//        {
-//            syncSampleList.AddRange(syncPackets[index].SampleList);
-//        }
-//    }
-//}
+var referenceHasStopStamp = referencePackets.Last().GenericChannelHeader.Timestamp > stopTimestamp;
+var syncHasStopStamp = syncPackets.Last().GenericChannelHeader.Timestamp > stopTimestamp;
+if (referenceHasStopStamp == false || syncHasStopStamp == false)
+{
+    throw new IndexOutOfRangeException("The stop timestamp does not exist for both packet lists");
+}
 
-syncSampleList = syncPackets.SelectMany(packet => packet.SampleList)
-                            .ToList();
+var referenceSampleList = referencePackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
+                                          .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
+                                          .SelectMany(packet => packet.SampleList)
+                                          .ToArray();
+
+var syncSampleList = syncPackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
+                                .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
+                                .SelectMany(packet => packet.SampleList)
+                                .ToArray();
 
 // Display the data block
-var plot = new ScottPlot.Plot(600, 400);
-plot.AddSignal(referenceSampleList.ToArray(), sampleRate, label: "Reference Channel");
-plot.AddSignal(syncSampleList.ToArray(), sampleRate, label: "Synchronized Channel");
+var plot = new ScottPlot.Plot(1200, 800);
+plot.AddSignal(referenceSampleList, sampleRate, label: "Reference Channel");
+plot.AddSignal(syncSampleList, sampleRate, label: "Synchronized Channel");
 plot.Legend();
 
-plot.SaveFig("result.png");
+plot.Title("A common input signal measured by two system without a synchronization pulse");
+plot.XLabel("Time in seconds (s)");
+plot.YLabel("Voltage (V)");
 
-//new ScottPlot.WpfPlotViewer(plot).ShowDialog();
+plot.SaveFig("result.png");
+new ScottPlot.FormsPlotViewer(plot).ShowDialog();
 
 int CheckTimeDifference(SystemTime system1Time, SystemTime system2Time)
 {

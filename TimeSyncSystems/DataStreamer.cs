@@ -33,9 +33,6 @@ public class DataStreamer
     public void StartStreaming()
     {
         // This will initiate the data stream. After this we need to gather data fast.
-        tcpClient = new TcpClient(ipAddress, port);
-        networkStreamer = tcpClient.GetStream();
-
         streamingThread = Task.Factory.StartNew(StreamData, token);
     }
 
@@ -65,6 +62,9 @@ public class DataStreamer
 
     private void StreamData()
     {
+        tcpClient = new TcpClient(ipAddress, port);
+        networkStreamer = tcpClient.GetStream();
+
         while (token.IsCancellationRequested == false)
         {
             if (networkStreamer.DataAvailable == false)

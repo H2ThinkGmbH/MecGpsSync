@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="ScottPlot" Version="4.1.68" />
-    <PackageReference Include="ScottPlot.WPF" Version="4.1.68" />
+    <PackageReference Include="ScottPlot.WinForms" Version="4.1.68" />
   </ItemGroup>
 
   <ItemGroup>
