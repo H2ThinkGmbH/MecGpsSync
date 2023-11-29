@@ -1,5 +1,6 @@
 ﻿using QProtocol.DataStreaming.DataPackets;
 using QProtocol.DataStreaming.Headers;
+using System.Diagnostics;
 using System.Net.Sockets;
 
 namespace TimeSyncSystems;
@@ -8,6 +9,7 @@ public class DataStreamer
 {
     private readonly string ipAddress = string.Empty;
     private readonly int port = 0;
+    private readonly int sampleRate = 0;
 
     private TcpClient tcpClient;
     private NetworkStream networkStreamer;
@@ -16,13 +18,15 @@ public class DataStreamer
     private Task streamingThread;
     private readonly CancellationTokenSource tokenSource = new();
     private readonly CancellationToken token;
+    private Stopwatch firstPacketStartTime; 
 
     public List<AnalogDataPacket> AnalogDataPackets { get; } = new();
 
-    public DataStreamer(string ipAddress, int port)
+    public DataStreamer(string ipAddress, int port, int sampleRate)
     {
         this.ipAddress = ipAddress;
         this.port = port;
+        this.sampleRate = sampleRate;
         token = tokenSource.Token;
     }
 
@@ -37,11 +41,26 @@ public class DataStreamer
 
     public void StopStreaming() 
     {
+        if (AnalogDataPackets.Count == 0)
+        {
+            networkStreamer.Close();
+            tcpClient.Close();
+            return;
+        }
+
+        while (firstPacketStartTime.ElapsedMilliseconds < 2000)
+        {
+            Thread.Sleep(25);
+        }
+
         tokenSource.Cancel();
         while (!streamingThread.IsCanceled && !streamingThread.IsCompleted) 
         {
             Thread.Sleep(1);
         }
+
+        networkStreamer.Close();
+        tcpClient.Close();
     }
 
     private void StreamData()
@@ -77,6 +96,11 @@ public class DataStreamer
             if (bytesLeft == 0)
             {
                 continue;
+            }
+
+            if (firstPacketStartTime == null)
+            {
+                firstPacketStartTime = Stopwatch.StartNew();
             }
 
             networkStreamer.ReadExactly(buffer, 0, (int)bytesLeft);

@@ -9,14 +9,14 @@ using QProtocol;
 using QProtocol.Advanced;
 using QProtocol.Controllers;
 using QProtocol.GenericDefines;
-using QProtocol.InternalModules.WSB;
+using QProtocol.InternalModules.ICS;
 using System.Reflection;
 using TimeSyncSystems;
 
 Console.WriteLine($"Mecalc Time Sync Systems {Assembly.GetExecutingAssembly().GetName().Version}");
 
 // First connect to the separate systems
-var ipSystem1 = "192.168.100.26";
+var ipSystem1 = "192.168.100.45";
 var system1RestfulInterface = new RestfulInterface($"http://{ipSystem1}:8080");
 var pingResponse = system1RestfulInterface.Get<InfoPing>(EndPoints.InfoPing);
 if (pingResponse == null || pingResponse.Code < 0)
@@ -24,7 +24,7 @@ if (pingResponse == null || pingResponse.Code < 0)
     Console.WriteLine("Unable to ping system 1");
 }
 
-var ipSystem2 = "";
+var ipSystem2 = "192.168.100.44"; //"169.254.28.242";
 var system2RestfulInterface = new RestfulInterface($"http://{ipSystem2}:8080");
 pingResponse = system2RestfulInterface.Get<InfoPing>(EndPoints.InfoPing);
 if (pingResponse == null || pingResponse.Code < 0)
@@ -34,8 +34,10 @@ if (pingResponse == null || pingResponse.Code < 0)
 
 // The following section is used to set the system clocks.
 // After the command has been set, the systems have to reboot and then the test can start.
-var setTime = true;
-if (setTime)
+var system1Time = system1RestfulInterface.Get<SystemTime>(EndPoints.SystemTime);
+var system2Time = system2RestfulInterface.Get<SystemTime>(EndPoints.SystemTime);
+var timeDifference = CheckTimeDifference(system1Time, system2Time);
+if (timeDifference > 1)
 {
     var time = SystemTime.GetPresentTime();
     system1RestfulInterface.Put(EndPoints.SystemTime, time);
@@ -45,7 +47,7 @@ if (setTime)
 }
 
 // Do a standard configuration.
-// As explained before, this example is dependent on WSB42X6 Modules. If other Module types are used then this section.
+// As explained before, this example is dependent on ICS425 Modules. If other Module types are used then this section.
 // needs to be updated with the appropriate setup.
 var system1Items = Item.CreateList(system1RestfulInterface);
 var controller = (Controller)system1Items.First();
@@ -54,8 +56,8 @@ controllerSettings.Settings.MasterSamplingRate = Controller.MasterSamplingRate._
 controllerSettings.Settings.AnalogDataStreamingFormat = Controller.AnalogDataStreamingFormat.Raw;
 controller.PutItemSettings(controllerSettings);
 
-var system1Modules = system1Items.OfType<WSB42X6Module>().ToList();
-var system1Channels = system1Items.OfType<WSB42X6Channel>().ToList();
+var system1Modules = system1Items.OfType<ICS425Module>().ToList();
+var system1Channels = system1Items.OfType<ICS425Channel>().ToList();
 if (system1Modules == null || system1Channels == null
     || system1Modules.Count < 1 || system1Channels.Count < 1)
 {
@@ -64,18 +66,19 @@ if (system1Modules == null || system1Channels == null
 
 foreach (var module in system1Modules)
 {
-    module.PutItemOperationMode(WSB42X6Module.OperationMode.Enabled);
-    var moduleSettings = module.GetItemSettings<WSB42X6Module.EnabledSettings>();
-    moduleSettings.Settings.SampleRate = WSB42X6Module.SampleRate.MsrDivideBy2;
+    module.PutItemOperationMode(ICS425Module.OperationMode.Enabled);
+    var moduleSettings = module.GetItemSettings<ICS425Module.EnabledSettings>();
+    moduleSettings.Settings.SampleRate = ICS425Module.SampleRate.MsrDivideBy2;
     module.PutItemSettings(moduleSettings);
 }
 
 foreach (var channel in system1Channels)
 {
-    channel.PutItemOperationMode(WSB42X6Channel.OperationMode.VoltageInput);
-    var channelSettings = channel.GetItemSettings<WSB42X6Channel.VoltageInputSettings>();
-    channelSettings.Settings.VoltageRange = WSB42X6Channel.VoltageRange._1V;
-    channelSettings.Settings.VoltageInputCoupling = WSB42X6Channel.VoltageInputCoupling.AcWith1HzFilter;
+    channel.PutItemOperationMode(ICS425Channel.OperationMode.VoltageInput);
+    var channelSettings = channel.GetItemSettings<ICS425Channel.VoltageInputSettings>();
+    channelSettings.Settings.VoltageRange = ICS425Channel.VoltageRange._1V;
+    channelSettings.Settings.VoltageInputCoupling = ICS425Channel.VoltageInputCoupling.Dc;
+    channelSettings.Settings.InputBiasing = ICS425Channel.InputBiasing.SingleEnded;
     channelSettings.Data.StreamingState = Generic.Status.Enabled;
     if (channelSettings.Data.LocalStorage != null)
     {
@@ -93,8 +96,8 @@ controller2Settings.Settings.MasterSamplingRate = Controller.MasterSamplingRate.
 controller2Settings.Settings.AnalogDataStreamingFormat = Controller.AnalogDataStreamingFormat.Raw;
 controller2.PutItemSettings(controller2Settings);
 
-var system2Modules = system2Items.OfType<WSB42X6Module>().ToList();
-var system2Channels = system2Items.OfType<WSB42X6Channel>().ToList();
+var system2Modules = system2Items.OfType<ICS425Module>().ToList();
+var system2Channels = system2Items.OfType<ICS425Channel>().ToList();
 if (system2Modules == null || system2Channels == null
     || system2Modules.Count < 1 || system2Channels.Count < 1)
 {
@@ -103,18 +106,19 @@ if (system2Modules == null || system2Channels == null
 
 foreach (var module in system2Modules)
 {
-    module.PutItemOperationMode(WSB42X6Module.OperationMode.Enabled);
-    var moduleSettings = module.GetItemSettings<WSB42X6Module.EnabledSettings>();
-    moduleSettings.Settings.SampleRate = WSB42X6Module.SampleRate.MsrDivideBy2;
+    module.PutItemOperationMode(ICS425Module.OperationMode.Enabled);
+    var moduleSettings = module.GetItemSettings<ICS425Module.EnabledSettings>();
+    moduleSettings.Settings.SampleRate = ICS425Module.SampleRate.MsrDivideBy2;
     module.PutItemSettings(moduleSettings);
 }
 
 foreach (var channel in system2Channels)
 {
-    channel.PutItemOperationMode(WSB42X6Channel.OperationMode.VoltageInput);
-    var channelSettings = channel.GetItemSettings<WSB42X6Channel.VoltageInputSettings>();
-    channelSettings.Settings.VoltageRange = WSB42X6Channel.VoltageRange._1V;
-    channelSettings.Settings.VoltageInputCoupling = WSB42X6Channel.VoltageInputCoupling.AcWith1HzFilter;
+    channel.PutItemOperationMode(ICS425Channel.OperationMode.VoltageInput);
+    var channelSettings = channel.GetItemSettings<ICS425Channel.VoltageInputSettings>();
+    channelSettings.Settings.VoltageRange = ICS425Channel.VoltageRange._1V;
+    channelSettings.Settings.VoltageInputCoupling = ICS425Channel.VoltageInputCoupling.Dc;
+    channelSettings.Settings.InputBiasing = ICS425Channel.InputBiasing.SingleEnded;
     channelSettings.Data.StreamingState = Generic.Status.Enabled;
     if (channelSettings.Data.LocalStorage != null)
     {
@@ -129,11 +133,12 @@ system2RestfulInterface.Put(EndPoints.SystemSettingsApply);
 
 // Open a socket to each system
 // This will initiate the data transfer from the system to our application.
+var sampleRate = 131072 / 2; // This should be manually updated.
 var system1StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
-var system1Streamer = new DataStreamer(ipSystem1, system1StreamingSetup.TCPPort);
+var system1Streamer = new DataStreamer(ipSystem1, system1StreamingSetup.TCPPort, sampleRate);
 
 var system2StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
-var system2Streamer = new DataStreamer(ipSystem2, system2StreamingSetup.TCPPort);
+var system2Streamer = new DataStreamer(ipSystem2, system2StreamingSetup.TCPPort, sampleRate);
 
 Console.WriteLine($"Ready to stream data. Press S to start and C to stop.");
 var startKey = Console.ReadKey();
@@ -168,41 +173,69 @@ var syncPackets = system2Streamer.AnalogDataPackets
 
 var activityTimeStamp = 0ul;
 var referenceSampleList = new List<float>();
-for (int index = 0; index < referencePackets.Count; index++)
-{
-    var packet = referencePackets[index];
-    if (packet.AnalogChannelHeader.Max < 0.5)
-    {
-        continue;
-    }
+//for (int index = 0; index < referencePackets.Count; index++)
+//{
+//    var packet = referencePackets[index];
+//    if (packet.AnalogChannelHeader.Max < 0.1)
+//    {
+//        continue;
+//    }
 
-    // Found a peak, same a few blocks of data.
-    activityTimeStamp = packet.GenericChannelHeader.Timestamp;
-    for (; index < index + 32; index++)
-    {
-        referenceSampleList.AddRange(referencePackets[index].SampleList);
-    }
+//    // Found a peak, save a few blocks of data.
+//    index--;
+//    activityTimeStamp = packet.GenericChannelHeader.Timestamp;
+//    var stopIndex = index + 32;
+//    if (referencePackets.Count < stopIndex)
+//    {
+//        stopIndex = referencePackets.Count;
+//    }
 
-    break;
-}
+//    for (; index < stopIndex; index++)
+//    {
+//        referenceSampleList.AddRange(referencePackets[index].SampleList);
+//    }
+
+//    break;
+//}
+
+referenceSampleList = referencePackets.SelectMany(packet => packet.SampleList)
+                                      .ToList();
 
 // Now find the same timestamp in system 2, and save the block of data.
 var syncSampleList = new List<float>();
-for (int index = 0; index < syncPackets.Count; index++)
-{
-    if (syncPackets[index].GenericChannelHeader.Timestamp == activityTimeStamp)
-    {
-        for (; index < index + 32; index++)
-        {
-            syncSampleList.AddRange(syncPackets[index].SampleList);
-        }
-    }
-}
+//for (int index = 0; index < syncPackets.Count; index++)
+//{
+//    if (syncPackets[index].GenericChannelHeader.Timestamp == activityTimeStamp)
+//    {
+//        var stopIndex = index + 32;
+//        if (syncPackets.Count < stopIndex)
+//        {
+//            stopIndex = syncPackets.Count;
+//        }
+
+//        for (; index < stopIndex; index++)
+//        {
+//            syncSampleList.AddRange(syncPackets[index].SampleList);
+//        }
+//    }
+//}
+
+syncSampleList = syncPackets.SelectMany(packet => packet.SampleList)
+                            .ToList();
 
 // Display the data block
 var plot = new ScottPlot.Plot(600, 400);
-plot.AddSignal(referenceSampleList.ToArray(), 131072 / 2, label: "Reference Channel");
-plot.AddSignal(syncSampleList.ToArray(), 131072 / 2, label: "Synchronized Channel");
+plot.AddSignal(referenceSampleList.ToArray(), sampleRate, label: "Reference Channel");
+plot.AddSignal(syncSampleList.ToArray(), sampleRate, label: "Synchronized Channel");
 plot.Legend();
 
-new ScottPlot.WpfPlotViewer(plot).ShowDialog();
+plot.SaveFig("result.png");
+
+//new ScottPlot.WpfPlotViewer(plot).ShowDialog();
+
+int CheckTimeDifference(SystemTime system1Time, SystemTime system2Time)
+{
+    var dateTimeSystem1 = new DateTime(system1Time.Year, system1Time.Month, system1Time.Day, system1Time.Hour, system1Time.Minutes, system1Time.Seconds);
+    var dateTimeSystem2 = new DateTime(system2Time.Year, system2Time.Month, system2Time.Day, system2Time.Hour, system2Time.Minutes, system2Time.Seconds);
+    return Math.Abs((int)(dateTimeSystem1 - dateTimeSystem2).TotalSeconds);
+}
