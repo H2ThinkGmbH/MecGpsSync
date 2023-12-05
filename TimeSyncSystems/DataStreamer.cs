@@ -21,6 +21,7 @@ public class DataStreamer
     private Stopwatch firstPacketStartTime; 
 
     public List<AnalogDataPacket> AnalogDataPackets { get; } = new();
+    public List<GpsDataPacket> GpsDataPackets { get; } = new();
 
     public DataStreamer(string ipAddress, int port, int sampleRate)
     {
@@ -141,6 +142,16 @@ public class DataStreamer
                         case ChannelTypes.Tacho:
                             var tachoDataPacket = new TachoDataPacket(genericChannelHeader, payloadReader);
                             bytesLeft -= tachoDataPacket.GetBinarySize();
+                            break;
+
+                        case ChannelTypes.Gps:
+                            var gpsChannelHeader = new GpsChannelHeader(payloadReader);
+                            bytesLeft -= gpsChannelHeader.GetBinarySize();
+
+                            var gpsDataPacket = new GpsDataPacket(genericChannelHeader, gpsChannelHeader, payloadReader);
+                            bytesLeft -= gpsDataPacket.GetBinarySize();
+
+                            GpsDataPackets.Add(gpsDataPacket);
                             break;
 
                         default:

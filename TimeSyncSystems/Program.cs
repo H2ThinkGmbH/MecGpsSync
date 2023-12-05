@@ -15,6 +15,8 @@ using TimeSyncSystems;
 
 Console.WriteLine($"Mecalc Time Sync Systems {Assembly.GetExecutingAssembly().GetName().Version}");
 
+var ptpSync = false;
+
 // First connect to the separate systems
 var ipSystem1 = "192.168.100.45";
 var system1RestfulInterface = new RestfulInterface($"http://{ipSystem1}:8080");
@@ -24,7 +26,7 @@ if (pingResponse == null || pingResponse.Code < 0)
     Console.WriteLine("Unable to ping system 1");
 }
 
-var ipSystem2 = "192.168.100.44"; //"169.254.28.242";
+var ipSystem2 = "192.168.100.52"; //"169.254.28.242";
 var system2RestfulInterface = new RestfulInterface($"http://{ipSystem2}:8080");
 pingResponse = system2RestfulInterface.Get<InfoPing>(EndPoints.InfoPing);
 if (pingResponse == null || pingResponse.Code < 0)
@@ -172,68 +174,19 @@ system2Streamer.StopStreaming();
 
 // Look for the impulse and select a block of data around it.
 // We will only use the first channel of each system. System 1 will be our reference.
-var referenceChannelId = system1Channels.First();
-var referencePackets = system1Streamer.AnalogDataPackets
-                                      .Where(packet => packet.GenericChannelHeader.ChannelId == referenceChannelId.ItemId)
-                                      .ToList();
 
-var syncChannelId = system2Channels.First();
-var syncPackets = system2Streamer.AnalogDataPackets
-                                 .Where(packet => packet.GenericChannelHeader.ChannelId == syncChannelId.ItemId)
-                                 .ToList();
 
-var referenceTimestamp = 0ul;
-for (int index = 0; index < referencePackets.Count; index++)
+float[] referenceSampleList = null;
+float[] syncSampleList = null;
+
+if (ptpSync)
 {
-    var packet = referencePackets[index];
-    if (packet.AnalogChannelHeader.Max < 0.1)
-    {
-        continue;
-    }
-
-    referenceTimestamp = packet.GenericChannelHeader.Timestamp;
-    break;
+    (referenceSampleList, syncSampleList) = PtpDataHandler.GetDataBlock(system1Streamer, system2Streamer);
 }
-
-var syncTimestamp = 0ul;
-for (int index = 0; index < syncPackets.Count; index++)
+else
 {
-    var packet = syncPackets[index];
-    if (packet.AnalogChannelHeader.Max < 0.1)
-    {
-        continue;
-    }
-
-    syncTimestamp = packet.GenericChannelHeader.Timestamp;
-    break;
+    (referenceSampleList, syncSampleList) = GpsDataHandler.GetDataBlock(system1Streamer, system2Streamer);
 }
-
-var startTimestamp = referenceTimestamp < syncTimestamp ? referenceTimestamp : syncTimestamp;
-var stopTimestamp = referenceTimestamp > syncTimestamp ? referenceTimestamp : syncTimestamp;
-
-var referenceHasStartStamp = referencePackets.First().GenericChannelHeader.Timestamp < startTimestamp;
-var syncHasStartStamp = syncPackets.First().GenericChannelHeader.Timestamp < startTimestamp;
-if (referenceHasStartStamp == false || syncHasStartStamp == false) 
-{
-    throw new IndexOutOfRangeException("The start timestamp does not exist for both packet lists");
-}
-
-var referenceHasStopStamp = referencePackets.Last().GenericChannelHeader.Timestamp > stopTimestamp;
-var syncHasStopStamp = syncPackets.Last().GenericChannelHeader.Timestamp > stopTimestamp;
-if (referenceHasStopStamp == false || syncHasStopStamp == false)
-{
-    throw new IndexOutOfRangeException("The stop timestamp does not exist for both packet lists");
-}
-
-var referenceSampleList = referencePackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
-                                          .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
-                                          .SelectMany(packet => packet.SampleList)
-                                          .ToArray();
-
-var syncSampleList = syncPackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
-                                .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
-                                .SelectMany(packet => packet.SampleList)
-                                .ToArray();
 
 // Display the data block
 var plot = new ScottPlot.Plot(1200, 800);
