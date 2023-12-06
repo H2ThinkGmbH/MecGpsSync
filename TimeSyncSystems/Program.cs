@@ -15,7 +15,9 @@ using TimeSyncSystems;
 
 Console.WriteLine($"Mecalc Time Sync Systems {Assembly.GetExecutingAssembly().GetName().Version}");
 
+var checkSystemTime = false;
 var ptpSync = false;
+var scopePulse = true;
 
 // First connect to the separate systems
 var ipSystem1 = "192.168.100.45";
@@ -36,10 +38,11 @@ if (pingResponse == null || pingResponse.Code < 0)
 
 // The following section is used to set the system clocks.
 // After the command has been set, the systems have to reboot and then the test can start.
+// This is only needed for the non PTP and non GPS test case.
 var system1Time = system1RestfulInterface.Get<SystemTime>(EndPoints.SystemTime);
 var system2Time = system2RestfulInterface.Get<SystemTime>(EndPoints.SystemTime);
 var timeDifference = CheckTimeDifference(system1Time, system2Time);
-if (timeDifference > 0)
+if (checkSystemTime && timeDifference > 0)
 {
     var time = SystemTime.GetPresentTime();
     var setTimeTask1 = Task.Factory.StartNew(() => system1RestfulInterface.Put(EndPoints.SystemTime, time));
@@ -174,10 +177,8 @@ system2Streamer.StopStreaming();
 
 // Look for the impulse and select a block of data around it.
 // We will only use the first channel of each system. System 1 will be our reference.
-
-
-float[] referenceSampleList = null;
-float[] syncSampleList = null;
+List<float> referenceSampleList = null;
+List<float> syncSampleList = null;
 
 if (ptpSync)
 {
@@ -188,18 +189,66 @@ else
     (referenceSampleList, syncSampleList) = GpsDataHandler.GetDataBlock(system1Streamer, system2Streamer);
 }
 
+
+float[] referenceSampleArray = null;
+float[] syncSampleArray = null;
+if (scopePulse)
+{
+    // Trim the data
+    var referenceFirstPeak = referenceSampleList.FindIndex(sample => sample > 0.1);
+    var syncFirstPeak = syncSampleList.FindIndex(sample => sample > 0.1);
+    var firstSampleIndex = -30 + (referenceFirstPeak > syncFirstPeak
+        ? syncFirstPeak
+        : referenceFirstPeak);
+
+    var referenceLastPeak = referenceSampleList.FindLastIndex(sample => sample < -0.1);
+    var syncLastPeak = syncSampleList.FindLastIndex(sample => sample < -0.1);
+    var lastSampleIndex = 30 + (referenceLastPeak > syncLastPeak
+        ? referenceLastPeak
+        : syncLastPeak);
+
+    // Some checks
+    if (firstSampleIndex < 0)
+    {
+        firstSampleIndex = 0;
+    }
+
+    if (lastSampleIndex >= syncSampleList.Count())
+    {
+        lastSampleIndex = syncSampleList.Count() - 1;
+    }
+
+    referenceSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
+    syncSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
+
+    referenceSampleList.CopyTo(firstSampleIndex, referenceSampleArray, 0, referenceSampleArray.Length);
+    syncSampleList.CopyTo(firstSampleIndex, syncSampleArray, 0, syncSampleArray.Length);
+}
+else 
+{
+    referenceSampleArray = referenceSampleList.ToArray();
+    syncSampleArray = syncSampleList.ToArray();
+}
+
 // Display the data block
-var plot = new ScottPlot.Plot(1200, 800);
-plot.AddSignal(referenceSampleList, sampleRate, label: "Reference Channel");
-plot.AddSignal(syncSampleList, sampleRate, label: "Synchronized Channel");
-plot.Legend();
+var thread = new Thread(() =>
+{
+    var plot = new ScottPlot.Plot(1200, 800);
+    plot.AddSignal(referenceSampleArray, sampleRate, label: "Reference Channel");
+    plot.AddSignal(syncSampleArray, sampleRate, label: "Synchronized Channel");
+    plot.Legend();
 
-plot.Title("A common input signal measured by two system without a synchronization pulse");
-plot.XLabel("Time in seconds (s)");
-plot.YLabel("Voltage (V)");
+    plot.Title("A common input signal measured by two systems with a GPS synchronization enabled");
+    plot.XLabel("Time in seconds (s)");
+    plot.YLabel("Voltage (V)");
 
-plot.SaveFig("result.png");
-new ScottPlot.FormsPlotViewer(plot).ShowDialog();
+    plot.SaveFig("result.png");
+    new ScottPlot.FormsPlotViewer(plot).ShowDialog();
+});
+
+thread.SetApartmentState(ApartmentState.STA);
+thread.Start();
+thread.Join();
 
 int CheckTimeDifference(SystemTime system1Time, SystemTime system2Time)
 {

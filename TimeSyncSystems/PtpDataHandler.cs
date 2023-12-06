@@ -10,7 +10,7 @@ namespace TimeSyncSystems;
 
 public class PtpDataHandler
 {
-    public static (float[] referenceSampleList, float[] syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem) 
+    public static (List<float> referenceSampleList, List<float> syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem) 
     {
         // Find the first channel. It is not necessarily the first packet in the list, but it will have the lowest assigned ID.
         var referenceChannelId = referenceSystem.AnalogDataPackets
@@ -75,12 +75,12 @@ public class PtpDataHandler
         var referenceBlock = referencePackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
                                              .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
                                              .SelectMany(packet => packet.SampleList)
-                                             .ToArray();
+                                             .ToList();
 
         var syncBlock = syncPackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
                                    .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
                                    .SelectMany(packet => packet.SampleList)
-                                   .ToArray();
+                                   .ToList();
 
         return (referenceBlock, syncBlock);
     }

@@ -1,8 +1,11 @@
-﻿namespace TimeSyncSystems;
+﻿using QServerValidation.DataStreaming.GpsHelper;
+using System.Linq;
+
+namespace TimeSyncSystems;
 
 public class GpsDataHandler
 {
-    public static (float[] referenceSampleList, float[] syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem)
+    public static (List<float> referenceSampleList, List<float> syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem)
     {
         // Find the first channel. It is not necessarily the first packet in the list, but it will have the lowest assigned ID.
         var referenceChannelId = referenceSystem.AnalogDataPackets
@@ -14,9 +17,6 @@ public class GpsDataHandler
                                               .Where(packet => packet.GenericChannelHeader.ChannelId == referenceChannelId)
                                               .ToList();
 
-        // And the timestamps (for reference)
-        var referenceTimestamps = referencePackets.Select(packet => packet.GenericChannelHeader.Timestamp)
-                                                  .ToList();
 
         // Repeat for sync system.
         var syncChannelId = syncSystem.AnalogDataPackets
@@ -27,90 +27,78 @@ public class GpsDataHandler
                                     .Where(packet => packet.GenericChannelHeader.ChannelId == syncChannelId)
                                     .ToList();
 
-        var syncTimestamps = syncPackets.Select(packet => packet.GenericChannelHeader.Timestamp)
-                                        .ToList();
-
         // With GPS sync we need to establish an offset from the system's internal timestamp and the GPS packet.
         // We can then correct the "sync time" with this offset and align the packets.
-        var referecenceGpsTimestamps = referenceSystem.GpsDataPackets
-                                                      .Select(packet => packet.GpsChannelHeader.Timestamp)
-                                                      .ToList();
+        var referenceGpsPacket = referenceSystem.GpsDataPackets.First();
+        var referenceGpGgaMessage = new GpGgaMessage(referenceGpsPacket.Message);
+        var referenceGpsTimestamp = (ulong)referenceGpsPacket.GpsChannelHeader.Timestamp * 1000000; // ms to ns
 
-        var syncGpsTimestamps = syncSystem.GpsDataPackets
-                                          .Select(packet => packet.GpsChannelHeader.Timestamp)
-                                          .ToList();
+        var syncGpsPacket = syncSystem.GpsDataPackets.First();
+        var syncGpGgaMessage = new GpGgaMessage(syncGpsPacket.Message);
+        var syncGpsTimestamp = (ulong)syncGpsPacket.GpsChannelHeader.Timestamp * 1000000;
 
-        // Dump the timestamps to a file for reference.
-        using var fileWriter = new StreamWriter("GpsTimeStamp_System_1.csv");
-        fileWriter.WriteLine("referenceTimestamp,syncTimestamp,referenceGpsTimestamp,syncGpsTimestamp,");
-        for (int index = 0; index < referenceTimestamps.Count && index < syncTimestamps.Count; index++)
+        if (referenceGpGgaMessage.Time.CompareTo(syncGpGgaMessage.Time) != 0)
         {
-            var gpsTimestamp = (index < referecenceGpsTimestamps.Count
-                ? $"{referecenceGpsTimestamps[index]},"
-                : ",");
-
-            gpsTimestamp += (index < syncGpsTimestamps.Count
-                ? $"{syncGpsTimestamps[index]},"
-                : ",");
-
-            fileWriter.WriteLine($"{referenceTimestamps[index]},{syncTimestamps[index]},{gpsTimestamp}");
+            throw new InvalidOperationException("The time received from the two GPS messages are different hence we cannot align the data.");
         }
 
-        fileWriter.Close();
-
-        // Next find the impulse on both channels.
-        var referenceTimestamp = 0ul;
-        for (int index = 0; index < referencePackets.Count; index++)
+        // Next find the impulse on both channels, save a block before and block after the impulse too.
+        var referenceDataTimestamp = 0ul;
+        var referenceSamples = new List<float>();
+        for (int index = 1; index < referencePackets.Count - 1; index++)
         {
-            var packet = referencePackets[index];
-            if (packet.AnalogChannelHeader.Max < 0.1)
+            if (referencePackets[index].AnalogChannelHeader.Max < 0.1)
             {
                 continue;
             }
 
-            referenceTimestamp = packet.GenericChannelHeader.Timestamp;
+            referenceSamples.AddRange(referencePackets[index - 1].SampleList);
+            referenceSamples.AddRange(referencePackets[index].SampleList);
+            referenceSamples.AddRange(referencePackets[index + 1].SampleList);
+            referenceDataTimestamp = referencePackets[index - 1].GenericChannelHeader.Timestamp;
             break;
         }
 
-        var syncTimestamp = 0ul;
-        for (int index = 0; index < syncPackets.Count; index++)
+        var syncDataTimestamp = 0ul;
+        var syncSamples = new List<float>();
+        for (int index = 1; index < syncPackets.Count - 1; index++)
         {
-            var packet = syncPackets[index];
-            if (packet.AnalogChannelHeader.Max < 0.1)
+            if (syncPackets[index].AnalogChannelHeader.Max < 0.1)
             {
                 continue;
             }
 
-            syncTimestamp = packet.GenericChannelHeader.Timestamp;
+            syncSamples.AddRange(syncPackets[index - 1].SampleList);
+            syncSamples.AddRange(syncPackets[index].SampleList);
+            syncSamples.AddRange(syncPackets[index + 1].SampleList);
+            syncDataTimestamp = syncPackets[index - 1].GenericChannelHeader.Timestamp;
             break;
         }
 
-        var startTimestamp = referenceTimestamp < syncTimestamp ? referenceTimestamp : syncTimestamp;
-        var stopTimestamp = referenceTimestamp > syncTimestamp ? referenceTimestamp : syncTimestamp;
-
-        if (referencePackets.First().GenericChannelHeader.Timestamp > startTimestamp
-            || syncPackets.First().GenericChannelHeader.Timestamp > startTimestamp)
+        if (referenceDataTimestamp == 0 || syncDataTimestamp == 0)
         {
-            throw new IndexOutOfRangeException("The start timestamp does not exist for both packet lists");
+            throw new IndexOutOfRangeException("Could not find the impulse for both streams of data.");
         }
 
-        if (referencePackets.Last().GenericChannelHeader.Timestamp < stopTimestamp
-            || syncPackets.Last().GenericChannelHeader.Timestamp < stopTimestamp)
+        // Now correct for the time delay between the two systems.
+        var referenceDelta = (long)(referenceDataTimestamp - referenceGpsTimestamp);
+        var syncDelta = (long)(syncDataTimestamp - syncGpsTimestamp);
+
+        var absoluteDelta = syncDelta - referenceDelta; // in ns
+
+        // Discard the amount of samples to align the data.
+        var sampleCount = (int)(65536 * Math.Abs(absoluteDelta) / 1000000000); // SR * delta
+        if (absoluteDelta < 0) 
         {
-            throw new IndexOutOfRangeException("The stop timestamp does not exist for both packet lists");
+            syncSamples.RemoveRange(0, sampleCount);
+            referenceSamples.RemoveRange(referenceSamples.Count - sampleCount, sampleCount);
+        }
+        else
+        {
+            syncSamples.RemoveRange(syncSamples.Count - sampleCount, sampleCount);
+            referenceSamples.RemoveRange(0, sampleCount);
         }
 
-        // Now select the block of data that exist in both streams which had the same time stamps.
-        var referenceBlock = referencePackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
-                                             .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
-                                             .SelectMany(packet => packet.SampleList)
-                                             .ToArray();
-
-        var syncBlock = syncPackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
-                                   .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
-                                   .SelectMany(packet => packet.SampleList)
-                                   .ToArray();
-
-        return (referenceBlock, syncBlock);
+        return (referenceSamples, syncSamples);
     }
 }
