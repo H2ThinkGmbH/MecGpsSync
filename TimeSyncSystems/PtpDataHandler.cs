@@ -77,10 +77,10 @@ public class PtpDataHandler
                                              .SelectMany(packet => packet.SampleList)
                                              .ToArray();
 
-        var syncBlock = referencePackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
-                                        .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
-                                        .SelectMany(packet => packet.SampleList)
-                                        .ToArray();
+        var syncBlock = syncPackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
+                                   .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
+                                   .SelectMany(packet => packet.SampleList)
+                                   .ToArray();
 
         return (referenceBlock, syncBlock);
     }

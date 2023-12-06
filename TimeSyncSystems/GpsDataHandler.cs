@@ -9,13 +9,16 @@ public class GpsDataHandler
                                                 .Select(packet => packet.GenericChannelHeader.ChannelId)
                                                 .Min();
 
+        // Next, grab the data packets saved.
         var referencePackets = referenceSystem.AnalogDataPackets
                                               .Where(packet => packet.GenericChannelHeader.ChannelId == referenceChannelId)
                                               .ToList();
 
+        // And the timestamps (for reference)
         var referenceTimestamps = referencePackets.Select(packet => packet.GenericChannelHeader.Timestamp)
                                                   .ToList();
 
+        // Repeat for sync system.
         var syncChannelId = syncSystem.AnalogDataPackets
                                       .Select(packet => packet.GenericChannelHeader.ChannelId)
                                       .Min();
@@ -29,15 +32,31 @@ public class GpsDataHandler
 
         // With GPS sync we need to establish an offset from the system's internal timestamp and the GPS packet.
         // We can then correct the "sync time" with this offset and align the packets.
-        var referenceSystemTimestamp = referenceSystem.GpsDataPackets
-                                                      .First()
-                                                      .GpsChannelHeader
-                                                      .Timestamp;
+        var referecenceGpsTimestamps = referenceSystem.GpsDataPackets
+                                                      .Select(packet => packet.GpsChannelHeader.Timestamp)
+                                                      .ToList();
 
-        var syncSystemTimestamp = syncSystem.GpsDataPackets
-                                            .First()
-                                            .GpsChannelHeader
-                                            .Timestamp;
+        var syncGpsTimestamps = syncSystem.GpsDataPackets
+                                          .Select(packet => packet.GpsChannelHeader.Timestamp)
+                                          .ToList();
+
+        // Dump the timestamps to a file for reference.
+        using var fileWriter = new StreamWriter("GpsTimeStamp_System_1.csv");
+        fileWriter.WriteLine("referenceTimestamp,syncTimestamp,referenceGpsTimestamp,syncGpsTimestamp,");
+        for (int index = 0; index < referenceTimestamps.Count && index < syncTimestamps.Count; index++)
+        {
+            var gpsTimestamp = (index < referecenceGpsTimestamps.Count
+                ? $"{referecenceGpsTimestamps[index]},"
+                : ",");
+
+            gpsTimestamp += (index < syncGpsTimestamps.Count
+                ? $"{syncGpsTimestamps[index]},"
+                : ",");
+
+            fileWriter.WriteLine($"{referenceTimestamps[index]},{syncTimestamps[index]},{gpsTimestamp}");
+        }
+
+        fileWriter.Close();
 
         // Next find the impulse on both channels.
         var referenceTimestamp = 0ul;
@@ -66,8 +85,6 @@ public class GpsDataHandler
             break;
         }
 
-
-
         var startTimestamp = referenceTimestamp < syncTimestamp ? referenceTimestamp : syncTimestamp;
         var stopTimestamp = referenceTimestamp > syncTimestamp ? referenceTimestamp : syncTimestamp;
 
@@ -89,10 +106,10 @@ public class GpsDataHandler
                                              .SelectMany(packet => packet.SampleList)
                                              .ToArray();
 
-        var syncBlock = referencePackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
-                                        .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
-                                        .SelectMany(packet => packet.SampleList)
-                                        .ToArray();
+        var syncBlock = syncPackets.Where(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp)
+                                   .Where(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp)
+                                   .SelectMany(packet => packet.SampleList)
+                                   .ToArray();
 
         return (referenceBlock, syncBlock);
     }
