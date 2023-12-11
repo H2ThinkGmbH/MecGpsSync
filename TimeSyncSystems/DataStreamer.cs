@@ -57,6 +57,7 @@ public class DataStreamer
             Thread.Sleep(1);
         }
 
+        networkStreamer.Flush();
         networkStreamer.Close();
         tcpClient.Close();
     }

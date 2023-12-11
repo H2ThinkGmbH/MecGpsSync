@@ -5,50 +5,62 @@ namespace TimeSyncSystems;
 
 public class GpsDataHandler
 {
-    public static (List<float> referenceSampleList, List<float> syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem)
-    {
-        // Find the first channel. It is not necessarily the first packet in the list, but it will have the lowest assigned ID.
-        var referenceChannelId = referenceSystem.AnalogDataPackets
-                                                .Select(packet => packet.GenericChannelHeader.ChannelId)
-                                                .Min();
+    private int _referenceChannelId = -1;
+    private int _syncChannelId = -1;
+    private ulong _referenceSystemDelay = 0;
+    private ulong _syncSystemDelay = 0;
 
-        // Next, grab the data packets saved.
+    public GpsDataHandler(int referenceChannelId, int syncChannelId)
+    {
+        _referenceChannelId = referenceChannelId;
+        _syncChannelId = syncChannelId;
+    }
+
+    public (List<float> referenceSampleList, List<float> syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem)
+    {
+        // Grab the data packets saved.
         var referencePackets = referenceSystem.AnalogDataPackets
-                                              .Where(packet => packet.GenericChannelHeader.ChannelId == referenceChannelId)
+                                              .Where(packet => packet.GenericChannelHeader.ChannelId == _referenceChannelId)
                                               .ToList();
 
-
-        // Repeat for sync system.
-        var syncChannelId = syncSystem.AnalogDataPackets
-                                      .Select(packet => packet.GenericChannelHeader.ChannelId)
-                                      .Min();
-
         var syncPackets = syncSystem.AnalogDataPackets
-                                    .Where(packet => packet.GenericChannelHeader.ChannelId == syncChannelId)
+                                    .Where(packet => packet.GenericChannelHeader.ChannelId == _syncChannelId)
                                     .ToList();
 
-        // With GPS sync we need to establish an offset from the system's internal timestamp and the GPS packet.
-        // We can then correct the "sync time" with this offset and align the packets.
-        var referenceGpsPacket = referenceSystem.GpsDataPackets.First();
-        var referenceGpGgaMessage = new GpGgaMessage(referenceGpsPacket.Message);
-        var referenceGpsTimestamp = (ulong)referenceGpsPacket.GpsChannelHeader.Timestamp * 1000000; // ms to ns
-
-        var syncGpsPacket = syncSystem.GpsDataPackets.First();
-        var syncGpGgaMessage = new GpGgaMessage(syncGpsPacket.Message);
-        var syncGpsTimestamp = (ulong)syncGpsPacket.GpsChannelHeader.Timestamp * 1000000;
-
-        if (referenceGpGgaMessage.Time.CompareTo(syncGpGgaMessage.Time) != 0)
+        if (_referenceSystemDelay == 0 && _syncSystemDelay == 0)
         {
-            throw new InvalidOperationException("The time received from the two GPS messages are different hence we cannot align the data.");
+            // With GPS sync we need to establish an offset from the system's internal timestamp and the GPS packet.
+            // We can then correct the "sync time" with this offset and align the packets.
+            // We only have to do this once, after which we trust the system sync and this delay remains constant.
+            var referenceGpsPacket = referenceSystem.GpsDataPackets.First();
+            var referenceGpGgaMessage = new GpGgaMessage(referenceGpsPacket.Message);
+            _referenceSystemDelay = (ulong)referenceGpsPacket.GpsChannelHeader.Timestamp * 1000000; // ms to ns
+
+            var syncGpsPacket = syncSystem.GpsDataPackets.First();
+            var syncGpGgaMessage = new GpGgaMessage(syncGpsPacket.Message);
+            _syncSystemDelay = (ulong)syncGpsPacket.GpsChannelHeader.Timestamp * 1000000;
+
+            if (referenceGpGgaMessage.Time.CompareTo(syncGpGgaMessage.Time) != 0)
+            {
+                throw new InvalidOperationException("The time received from the two GPS messages are different hence we cannot align the data.");
+            }
         }
 
         // Next find the impulse on both channels, save a block before and block after the impulse too.
         var referenceDataTimestamp = 0ul;
         var referenceSamples = new List<float>();
+        var pulseCount = 1;
         for (int index = 1; index < referencePackets.Count - 1; index++)
         {
             if (referencePackets[index].AnalogChannelHeader.Max < 0.1)
             {
+                continue;
+            }
+
+            // Ignore the first pulse since we could have started a sample block in the middle of it.
+            if (pulseCount != 0)
+            {
+                pulseCount = 0;
                 continue;
             }
 
@@ -61,10 +73,17 @@ public class GpsDataHandler
 
         var syncDataTimestamp = 0ul;
         var syncSamples = new List<float>();
+        pulseCount = 1;
         for (int index = 1; index < syncPackets.Count - 1; index++)
         {
             if (syncPackets[index].AnalogChannelHeader.Max < 0.1)
             {
+                continue;
+            }
+
+            if (pulseCount != 0)
+            {
+                pulseCount = 0;
                 continue;
             }
 
@@ -81,8 +100,8 @@ public class GpsDataHandler
         }
 
         // Now correct for the time delay between the two systems.
-        var referenceDelta = (long)(referenceDataTimestamp - referenceGpsTimestamp);
-        var syncDelta = (long)(syncDataTimestamp - syncGpsTimestamp);
+        var referenceDelta = (long)(referenceDataTimestamp - _referenceSystemDelay);
+        var syncDelta = (long)(syncDataTimestamp - _syncSystemDelay);
 
         var absoluteDelta = syncDelta - referenceDelta; // in ns
 

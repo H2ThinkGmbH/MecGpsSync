@@ -10,6 +10,7 @@ using QProtocol.Advanced;
 using QProtocol.Controllers;
 using QProtocol.GenericDefines;
 using QProtocol.InternalModules.ICS;
+using System.Diagnostics;
 using System.Reflection;
 using TimeSyncSystems;
 
@@ -18,6 +19,7 @@ Console.WriteLine($"Mecalc Time Sync Systems {Assembly.GetExecutingAssembly().Ge
 var checkSystemTime = false;
 var ptpSync = false;
 var scopePulse = true;
+var repeat = true;
 
 // First connect to the separate systems
 var ipSystem1 = "192.168.100.45";
@@ -50,7 +52,7 @@ if (checkSystemTime && timeDifference > 0)
     Console.WriteLine($"Time difference was {timeDifference} s, it was reset hence reboot both system and run the application again.");
     Console.ReadKey();
 
-    while (setTimeTask1.IsCompleted == false && setTimeTask2.IsCompleted == false)
+    while (setTimeTask1.IsCompleted == false && setTimeTask2.IsCompleted == false)  
     {
         Thread.Sleep(1);
     }
@@ -147,108 +149,145 @@ while (applyTask1.IsCompleted == false && applyTask2.IsCompleted == false)
     Thread.Sleep(1);
 }
 
-// Open a socket to each system
-// This will initiate the data transfer from the system to our application.
+// Save the channel Id's which is sampling the signal
+var referenceChannelId = system1Channels.First().ItemId;
+var syncChannelId = system2Channels.First().ItemId;
+var gpsDataHandler = new GpsDataHandler(referenceChannelId, syncChannelId);
+
 var sampleRate = 131072 / 2; // This should be manually updated.
 var system1StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
-var system1Streamer = new DataStreamer(ipSystem1, system1StreamingSetup.TCPPort, sampleRate);
-
 var system2StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
-var system2Streamer = new DataStreamer(ipSystem2, system2StreamingSetup.TCPPort, sampleRate);
 
-Console.WriteLine($"Ready to stream data. Press S to start and C to stop.");
-var startKey = Console.ReadKey();
-if (startKey.Key != ConsoleKey.S)
+var timer = Stopwatch.StartNew();
+var timestamp = timer.ElapsedMilliseconds;
+do
 {
-    Environment.Exit(0);
-}
+    // Open a socket to each system
+    // This will initiate the data transfer from the system to our application.
+    var system1Streamer = new DataStreamer(ipSystem1, system1StreamingSetup.TCPPort, sampleRate);
+    var system2Streamer = new DataStreamer(ipSystem2, system2StreamingSetup.TCPPort, sampleRate);
 
-// Save some data.
-system1Streamer.StartStreaming();
-system2Streamer.StartStreaming();
-while (Console.KeyAvailable == false
-       && Console.ReadKey().Key != ConsoleKey.C)
-{
-    Thread.Sleep(10);
-}
+    // Create a results directory
+    var timeSaved = DateTime.Now;
+    var path = Path.Combine(Directory.GetCurrentDirectory(), "Results", timeSaved.ToString("yyyyMMdd HHmm"));
+    Directory.CreateDirectory(path);
 
-system1Streamer.StopStreaming();
-system2Streamer.StopStreaming();
+    // Save some data.
+    system1Streamer.StartStreaming();
+    system2Streamer.StartStreaming();
+    Thread.Sleep(5000);
+    system1Streamer.StopStreaming();
+    system2Streamer.StopStreaming();
 
-// Look for the impulse and select a block of data around it.
-// We will only use the first channel of each system. System 1 will be our reference.
-List<float> referenceSampleList = null;
-List<float> syncSampleList = null;
+    // Look for the impulse and select a block of data around it.
+    // We will only use the first channel of each system. System 1 will be our reference.
+    List<float> referenceSampleList = null;
+    List<float> syncSampleList = null;
 
-if (ptpSync)
-{
-    (referenceSampleList, syncSampleList) = PtpDataHandler.GetDataBlock(system1Streamer, system2Streamer);
-}
-else
-{
-    (referenceSampleList, syncSampleList) = GpsDataHandler.GetDataBlock(system1Streamer, system2Streamer);
-}
-
-
-float[] referenceSampleArray = null;
-float[] syncSampleArray = null;
-if (scopePulse)
-{
-    // Trim the data
-    var referenceFirstPeak = referenceSampleList.FindIndex(sample => sample > 0.1);
-    var syncFirstPeak = syncSampleList.FindIndex(sample => sample > 0.1);
-    var firstSampleIndex = -30 + (referenceFirstPeak > syncFirstPeak
-        ? syncFirstPeak
-        : referenceFirstPeak);
-
-    var referenceLastPeak = referenceSampleList.FindLastIndex(sample => sample < -0.1);
-    var syncLastPeak = syncSampleList.FindLastIndex(sample => sample < -0.1);
-    var lastSampleIndex = 30 + (referenceLastPeak > syncLastPeak
-        ? referenceLastPeak
-        : syncLastPeak);
-
-    // Some checks
-    if (firstSampleIndex < 0)
+    if (ptpSync)
     {
-        firstSampleIndex = 0;
+        (referenceSampleList, syncSampleList) = PtpDataHandler.GetDataBlock(system1Streamer, system2Streamer);
+    }
+    else
+    {
+        (referenceSampleList, syncSampleList) = gpsDataHandler.GetDataBlock(system1Streamer, system2Streamer);
     }
 
-    if (lastSampleIndex >= syncSampleList.Count())
+    float[] referenceSampleArray = null;
+    float[] syncSampleArray = null;
+    if (scopePulse)
     {
-        lastSampleIndex = syncSampleList.Count() - 1;
+        // Trim the data
+        var referenceFirstPeak = referenceSampleList.FindIndex(sample => sample > 0.1);
+        var syncFirstPeak = syncSampleList.FindIndex(sample => sample > 0.1);
+        var firstSampleIndex = -30 + (referenceFirstPeak > syncFirstPeak
+            ? syncFirstPeak
+            : referenceFirstPeak);
+
+        var referenceLastPeak = referenceSampleList.FindLastIndex(sample => sample < -0.1);
+        var syncLastPeak = syncSampleList.FindLastIndex(sample => sample < -0.1);
+        var lastSampleIndex = 30 + (referenceLastPeak > syncLastPeak
+            ? referenceLastPeak
+            : syncLastPeak);
+
+        // Some checks
+        if (firstSampleIndex < 0)
+        {
+            firstSampleIndex = 0;
+        }
+
+        if (lastSampleIndex >= syncSampleList.Count())
+        {
+            lastSampleIndex = syncSampleList.Count() - 1;
+        }
+
+        referenceSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
+        syncSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
+
+        referenceSampleList.CopyTo(firstSampleIndex, referenceSampleArray, 0, referenceSampleArray.Length);
+        syncSampleList.CopyTo(firstSampleIndex, syncSampleArray, 0, syncSampleArray.Length);
+    }
+    else
+    {
+        referenceSampleArray = referenceSampleList.ToArray();
+        syncSampleArray = syncSampleList.ToArray();
     }
 
-    referenceSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
-    syncSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
+    var fileName = Path.Combine(path, "raw_data.csv");
+    using var fileWriter = new StreamWriter(fileName, false);
+    {
+        for (int index = 0; index < referenceSampleArray.Length; index++)
+        {
+            fileWriter.WriteLine($"{index / (double)sampleRate},{referenceSampleArray[index]},{syncSampleArray[index]}");
+        }
 
-    referenceSampleList.CopyTo(firstSampleIndex, referenceSampleArray, 0, referenceSampleArray.Length);
-    syncSampleList.CopyTo(firstSampleIndex, syncSampleArray, 0, syncSampleArray.Length);
-}
-else 
-{
-    referenceSampleArray = referenceSampleList.ToArray();
-    syncSampleArray = syncSampleList.ToArray();
-}
+        fileWriter.Close();
+    }
 
-// Display the data block
-var thread = new Thread(() =>
-{
-    var plot = new ScottPlot.Plot(1200, 800);
-    plot.AddSignal(referenceSampleArray, sampleRate, label: "Reference Channel");
-    plot.AddSignal(syncSampleArray, sampleRate, label: "Synchronized Channel");
-    plot.Legend();
+    // Display the data block
+    var thread = new Thread(() =>
+    {
+        var plot = new ScottPlot.Plot(1200, 800);
+        plot.AddSignal(referenceSampleArray, sampleRate, label: "Reference Channel");
+        plot.AddSignal(syncSampleArray, sampleRate, label: "Synchronized Channel");
+        plot.Legend();
 
-    plot.Title("A common input signal measured by two systems with a GPS synchronization enabled");
-    plot.XLabel("Time in seconds (s)");
-    plot.YLabel("Voltage (V)");
+        plot.Title("A common input signal measured by two systems with a GPS synchronization enabled");
+        plot.XLabel("Time in seconds (s)");
+        plot.YLabel("Voltage (V)");
 
-    plot.SaveFig("result.png");
-    new ScottPlot.FormsPlotViewer(plot).ShowDialog();
-});
+        var fileName = Path.Combine(path, "Plot.png");
+        plot.SaveFig(fileName);
 
-thread.SetApartmentState(ApartmentState.STA);
-thread.Start();
-thread.Join();
+        if (repeat == false)
+        {
+            new ScottPlot.FormsPlotViewer(plot).ShowDialog();
+        }
+    });
+
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+
+    Console.WriteLine($"Sample taken at {timeSaved}");
+    if (repeat == false)
+    {
+        thread.Join();
+    }
+
+    while ((timer.ElapsedMilliseconds - timestamp) < 1 * 60 * 1000)
+    {
+        Thread.Sleep(250);
+        if (Console.KeyAvailable && Console.ReadKey().Key == ConsoleKey.C)
+        {
+            Environment.Exit(0);
+        }
+    }
+
+    timestamp = timer.ElapsedMilliseconds;
+} while (repeat);
+
+
+
 
 int CheckTimeDifference(SystemTime system1Time, SystemTime system2Time)
 {
