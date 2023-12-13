@@ -1,12 +1,4 @@
-﻿using QProtocol.DataStreaming.DataPackets;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-
-namespace TimeSyncSystems;
+﻿namespace TimeSyncSystems;
 
 public class PtpDataHandler
 {

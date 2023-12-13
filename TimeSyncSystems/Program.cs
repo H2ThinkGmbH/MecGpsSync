@@ -10,6 +10,7 @@ using QProtocol.Advanced;
 using QProtocol.Controllers;
 using QProtocol.GenericDefines;
 using QProtocol.InternalModules.ICS;
+using System;
 using System.Diagnostics;
 using System.Reflection;
 using TimeSyncSystems;
@@ -17,12 +18,15 @@ using TimeSyncSystems;
 Console.WriteLine($"Mecalc Time Sync Systems {Assembly.GetExecutingAssembly().GetName().Version}");
 
 var checkSystemTime = false;
-var ptpSync = false;
+var ptpSync = true;
 var scopePulse = true;
-var repeat = true;
+var repeat = false;
+
+var sampleRate = 131072 / 2;
+var pulseFrequency = 2048.0;
 
 // First connect to the separate systems
-var ipSystem1 = "192.168.100.45";
+var ipSystem1 = "192.168.100.52";
 var system1RestfulInterface = new RestfulInterface($"http://{ipSystem1}:8080");
 var pingResponse = system1RestfulInterface.Get<InfoPing>(EndPoints.InfoPing);
 if (pingResponse == null || pingResponse.Code < 0)
@@ -30,7 +34,7 @@ if (pingResponse == null || pingResponse.Code < 0)
     Console.WriteLine("Unable to ping system 1");
 }
 
-var ipSystem2 = "192.168.100.52"; //"169.254.28.242";
+var ipSystem2 = "192.168.100.44"; //"169.254.28.242";
 var system2RestfulInterface = new RestfulInterface($"http://{ipSystem2}:8080");
 pingResponse = system2RestfulInterface.Get<InfoPing>(EndPoints.InfoPing);
 if (pingResponse == null || pingResponse.Code < 0)
@@ -154,7 +158,6 @@ var referenceChannelId = system1Channels.First().ItemId;
 var syncChannelId = system2Channels.First().ItemId;
 var gpsDataHandler = new GpsDataHandler(referenceChannelId, syncChannelId);
 
-var sampleRate = 131072 / 2; // This should be manually updated.
 var system1StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
 var system2StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
 
@@ -170,17 +173,15 @@ do
     // Create a results directory
     var timeSaved = DateTime.Now;
     var path = Path.Combine(Directory.GetCurrentDirectory(), "Results", timeSaved.ToString("yyyyMMdd HHmm"));
-    Directory.CreateDirectory(path);
 
     // Save some data.
     system1Streamer.StartStreaming();
     system2Streamer.StartStreaming();
-    Thread.Sleep(5000);
+    Thread.Sleep(1000);
     system1Streamer.StopStreaming();
     system2Streamer.StopStreaming();
 
-    // Look for the impulse and select a block of data around it.
-    // We will only use the first channel of each system. System 1 will be our reference.
+    // Find the impulse, and save the block of data.
     List<float> referenceSampleList = null;
     List<float> syncSampleList = null;
 
@@ -197,35 +198,82 @@ do
     float[] syncSampleArray = null;
     if (scopePulse)
     {
-        // Trim the data
-        var referenceFirstPeak = referenceSampleList.FindIndex(sample => sample > 0.1);
-        var syncFirstPeak = syncSampleList.FindIndex(sample => sample > 0.1);
-        var firstSampleIndex = -30 + (referenceFirstPeak > syncFirstPeak
-            ? syncFirstPeak
-            : referenceFirstPeak);
+        var slopeFound = false;
+        var index = 0;
+        var blockCount = ptpSync ? 64 : 2048;
 
-        var referenceLastPeak = referenceSampleList.FindLastIndex(sample => sample < -0.1);
-        var syncLastPeak = syncSampleList.FindLastIndex(sample => sample < -0.1);
-        var lastSampleIndex = 30 + (referenceLastPeak > syncLastPeak
-            ? referenceLastPeak
-            : syncLastPeak);
-
-        // Some checks
-        if (firstSampleIndex < 0)
+        // Find the first slope which is at least 32 samples delayed from the start.
+        // This makes pretty charts.
+        while (referenceSampleList.Count() - index > blockCount && syncSampleList.Count() - index > blockCount)
         {
-            firstSampleIndex = 0;
+            var referenceSlopeLower = referenceSampleList.FindIndex(sample => sample > 0.1 && sample < 0.2); // Should be a few in this range
+            var referenceSlopeUpper = referenceSampleList.FindIndex(sample => sample > 0.4);
+
+            var syncSlopeLower = syncSampleList.FindIndex(sample => sample > 0.1 && sample < 0.2);
+            var syncSlopeUpper = syncSampleList.FindIndex(sample => sample > 0.4);
+
+            // No peaks found, save data and exit.
+            if (referenceSlopeUpper < 0 || syncSlopeUpper < 0)
+            {
+                path += " suspect";
+                referenceSampleArray = referenceSampleList.ToArray();
+                syncSampleArray = syncSampleList.ToArray();
+                break;
+            }
+
+            if (referenceSlopeLower < 32 || referenceSlopeUpper < 32 || syncSlopeLower < 32 || syncSlopeUpper < 32)
+            {
+                index += blockCount;
+                continue;
+            }
+
+            slopeFound = true;
+            var firstSampleIndex = -32 + (syncSlopeLower < referenceSlopeLower
+                ? syncSlopeLower
+                : referenceSlopeLower);
+
+            // Add enough samples to cover both.
+            var lastSampleIndex = (int)(sampleRate / pulseFrequency) + 32 + (referenceSlopeLower > syncSlopeLower
+                ? referenceSlopeLower
+                : syncSlopeLower);
+
+            // Some checks
+            if (firstSampleIndex < 0)
+            {
+                firstSampleIndex = 0;
+            }
+
+            var sampleCount = lastSampleIndex - firstSampleIndex;
+            if (sampleCount < 131) // = 5 ms
+            {
+                sampleCount = 131;
+            }
+
+            if (firstSampleIndex + sampleCount >= referenceSampleList.Count())
+            {
+                sampleCount = referenceSampleList.Count() - firstSampleIndex;
+            }
+
+            if (firstSampleIndex + sampleCount >= syncSampleList.Count())
+            {
+                sampleCount = syncSampleList.Count() - firstSampleIndex;
+            }
+
+            referenceSampleArray = new float[sampleCount];
+            syncSampleArray = new float[sampleCount];
+
+            referenceSampleList.CopyTo(firstSampleIndex, referenceSampleArray, 0, referenceSampleArray.Length);
+            syncSampleList.CopyTo(firstSampleIndex, syncSampleArray, 0, syncSampleArray.Length);
+            break;
         }
 
-        if (lastSampleIndex >= syncSampleList.Count())
+        if (slopeFound == false)
         {
-            lastSampleIndex = syncSampleList.Count() - 1;
+            // at this stage the pulse could have died, dump the data and mark it as invalid.
+            path += " suspect";
+            referenceSampleArray = referenceSampleList.ToArray();
+            syncSampleArray = syncSampleList.ToArray();
         }
-
-        referenceSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
-        syncSampleArray = new float[lastSampleIndex - firstSampleIndex + 1];
-
-        referenceSampleList.CopyTo(firstSampleIndex, referenceSampleArray, 0, referenceSampleArray.Length);
-        syncSampleList.CopyTo(firstSampleIndex, syncSampleArray, 0, syncSampleArray.Length);
     }
     else
     {
@@ -233,10 +281,15 @@ do
         syncSampleArray = syncSampleList.ToArray();
     }
 
+    if (Directory.Exists(path) == false)
+    {
+        Directory.CreateDirectory(path);
+    }
+
     var fileName = Path.Combine(path, "raw_data.csv");
     using var fileWriter = new StreamWriter(fileName, false);
     {
-        for (int index = 0; index < referenceSampleArray.Length; index++)
+        for (int index = 0; index < referenceSampleArray.Length && index < syncSampleArray.Length; index++)
         {
             fileWriter.WriteLine($"{index / (double)sampleRate},{referenceSampleArray[index]},{syncSampleArray[index]}");
         }
@@ -252,7 +305,7 @@ do
         plot.AddSignal(syncSampleArray, sampleRate, label: "Synchronized Channel");
         plot.Legend();
 
-        plot.Title("A common input signal measured by two systems with a GPS synchronization enabled");
+        plot.Title($"A common input signal measured by two systems with {(ptpSync ? "PTP" : "GPS")} synchronization enabled");
         plot.XLabel("Time in seconds (s)");
         plot.YLabel("Voltage (V)");
 
@@ -274,7 +327,7 @@ do
         thread.Join();
     }
 
-    while ((timer.ElapsedMilliseconds - timestamp) < 1 * 60 * 1000)
+    while ((timer.ElapsedMilliseconds - timestamp) < 5 * 60 * 1000)
     {
         Thread.Sleep(250);
         if (Console.KeyAvailable && Console.ReadKey().Key == ConsoleKey.C)

@@ -1,5 +1,4 @@
 ﻿using QServerValidation.DataStreaming.GpsHelper;
-using System.Linq;
 
 namespace TimeSyncSystems;
 
@@ -18,15 +17,6 @@ public class GpsDataHandler
 
     public (List<float> referenceSampleList, List<float> syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem)
     {
-        // Grab the data packets saved.
-        var referencePackets = referenceSystem.AnalogDataPackets
-                                              .Where(packet => packet.GenericChannelHeader.ChannelId == _referenceChannelId)
-                                              .ToList();
-
-        var syncPackets = syncSystem.AnalogDataPackets
-                                    .Where(packet => packet.GenericChannelHeader.ChannelId == _syncChannelId)
-                                    .ToList();
-
         if (_referenceSystemDelay == 0 && _syncSystemDelay == 0)
         {
             // With GPS sync we need to establish an offset from the system's internal timestamp and the GPS packet.
@@ -46,78 +36,45 @@ public class GpsDataHandler
             }
         }
 
-        // Next find the impulse on both channels, save a block before and block after the impulse too.
-        var referenceDataTimestamp = 0ul;
-        var referenceSamples = new List<float>();
-        var pulseCount = 1;
-        for (int index = 1; index < referencePackets.Count - 1; index++)
+        // First determine the time stamps for both systems, also adjust it with the GPS absolute delay.
+        var referenceDataTimestamp = referenceSystem.AnalogDataPackets
+                                                    .Where(packet => packet.GenericChannelHeader.ChannelId == _referenceChannelId)
+                                                    .First()
+                                                    .GenericChannelHeader.Timestamp;
+        referenceDataTimestamp -= _referenceSystemDelay;
+
+        var referenceSampleBuffer = referenceSystem.AnalogDataPackets
+                                                   .Where(packet => packet.GenericChannelHeader.ChannelId == _referenceChannelId)
+                                                   .SelectMany(packet => packet.SampleList)
+                                                   .ToList();
+
+        var syncDataTimestamp = syncSystem.AnalogDataPackets
+                                          .Where(packet => packet.GenericChannelHeader.ChannelId == _syncChannelId)
+                                          .First()
+                                          .GenericChannelHeader.Timestamp;
+        syncDataTimestamp -= _syncSystemDelay;
+
+        var syncSampleBuffer = syncSystem.AnalogDataPackets
+                                         .Where(packet => packet.GenericChannelHeader.ChannelId == _syncChannelId)
+                                         .SelectMany(packet => packet.SampleList)
+                                         .ToList();
+
+        var absoluteDelta = (long)syncDataTimestamp - (long)referenceDataTimestamp; // in ns
+        var sampleCount = (int)(65536 * Math.Abs(absoluteDelta) / 1000000000); // SR * delta / ns
+
+        // Now here is the tricky bit, since QServer sends data as soon as it is ready, we must ensure the payloads we 
+        // receive are adjusted for the absolute delta as calculated. Hence, align the sample array by trimming the 
+        // data form the system who is leading.
+        if (absoluteDelta > 0)
         {
-            if (referencePackets[index].AnalogChannelHeader.Max < 0.1)
-            {
-                continue;
-            }
-
-            // Ignore the first pulse since we could have started a sample block in the middle of it.
-            if (pulseCount != 0)
-            {
-                pulseCount = 0;
-                continue;
-            }
-
-            referenceSamples.AddRange(referencePackets[index - 1].SampleList);
-            referenceSamples.AddRange(referencePackets[index].SampleList);
-            referenceSamples.AddRange(referencePackets[index + 1].SampleList);
-            referenceDataTimestamp = referencePackets[index - 1].GenericChannelHeader.Timestamp;
-            break;
-        }
-
-        var syncDataTimestamp = 0ul;
-        var syncSamples = new List<float>();
-        pulseCount = 1;
-        for (int index = 1; index < syncPackets.Count - 1; index++)
-        {
-            if (syncPackets[index].AnalogChannelHeader.Max < 0.1)
-            {
-                continue;
-            }
-
-            if (pulseCount != 0)
-            {
-                pulseCount = 0;
-                continue;
-            }
-
-            syncSamples.AddRange(syncPackets[index - 1].SampleList);
-            syncSamples.AddRange(syncPackets[index].SampleList);
-            syncSamples.AddRange(syncPackets[index + 1].SampleList);
-            syncDataTimestamp = syncPackets[index - 1].GenericChannelHeader.Timestamp;
-            break;
-        }
-
-        if (referenceDataTimestamp == 0 || syncDataTimestamp == 0)
-        {
-            throw new IndexOutOfRangeException("Could not find the impulse for both streams of data.");
-        }
-
-        // Now correct for the time delay between the two systems.
-        var referenceDelta = (long)(referenceDataTimestamp - _referenceSystemDelay);
-        var syncDelta = (long)(syncDataTimestamp - _syncSystemDelay);
-
-        var absoluteDelta = syncDelta - referenceDelta; // in ns
-
-        // Discard the amount of samples to align the data.
-        var sampleCount = (int)(65536 * Math.Abs(absoluteDelta) / 1000000000); // SR * delta
-        if (absoluteDelta < 0) 
-        {
-            syncSamples.RemoveRange(0, sampleCount);
-            referenceSamples.RemoveRange(referenceSamples.Count - sampleCount, sampleCount);
+            // Meaning my sync system's time is lagging behind the reference system
+            referenceSampleBuffer.RemoveRange(0, sampleCount);
         }
         else
         {
-            syncSamples.RemoveRange(syncSamples.Count - sampleCount, sampleCount);
-            referenceSamples.RemoveRange(0, sampleCount);
+            syncSampleBuffer.RemoveRange(0, sampleCount);
         }
 
-        return (referenceSamples, syncSamples);
+        return (referenceSampleBuffer, syncSampleBuffer);
     }
 }
