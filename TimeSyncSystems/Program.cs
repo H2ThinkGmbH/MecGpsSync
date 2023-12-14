@@ -20,7 +20,7 @@ Console.WriteLine($"Mecalc Time Sync Systems {Assembly.GetExecutingAssembly().Ge
 var checkSystemTime = false;
 var ptpSync = true;
 var scopePulse = true;
-var repeat = false;
+var repeat = true;
 
 var sampleRate = 131072 / 2;
 var pulseFrequency = 2048.0;
@@ -156,7 +156,6 @@ while (applyTask1.IsCompleted == false && applyTask2.IsCompleted == false)
 // Save the channel Id's which is sampling the signal
 var referenceChannelId = system1Channels.First().ItemId;
 var syncChannelId = system2Channels.First().ItemId;
-var gpsDataHandler = new GpsDataHandler(referenceChannelId, syncChannelId);
 
 var system1StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
 var system2StreamingSetup = system1RestfulInterface.Get<DataStreamSetup>(EndPoints.DataStreamSetup);
@@ -177,7 +176,7 @@ do
     // Save some data.
     system1Streamer.StartStreaming();
     system2Streamer.StartStreaming();
-    Thread.Sleep(1000);
+    Thread.Sleep(2500);
     system1Streamer.StopStreaming();
     system2Streamer.StopStreaming();
 
@@ -187,10 +186,12 @@ do
 
     if (ptpSync)
     {
-        (referenceSampleList, syncSampleList) = PtpDataHandler.GetDataBlock(system1Streamer, system2Streamer);
+        var ptpDataHandler = new PtpDataHandler(referenceChannelId, syncChannelId);
+        (referenceSampleList, syncSampleList) = ptpDataHandler.GetDataBlock(system1Streamer, system2Streamer);
     }
     else
     {
+        var gpsDataHandler = new GpsDataHandler(referenceChannelId, syncChannelId);
         (referenceSampleList, syncSampleList) = gpsDataHandler.GetDataBlock(system1Streamer, system2Streamer);
     }
 
@@ -198,82 +199,7 @@ do
     float[] syncSampleArray = null;
     if (scopePulse)
     {
-        var slopeFound = false;
-        var index = 0;
-        var blockCount = ptpSync ? 64 : 2048;
-
-        // Find the first slope which is at least 32 samples delayed from the start.
-        // This makes pretty charts.
-        while (referenceSampleList.Count() - index > blockCount && syncSampleList.Count() - index > blockCount)
-        {
-            var referenceSlopeLower = referenceSampleList.FindIndex(sample => sample > 0.1 && sample < 0.2); // Should be a few in this range
-            var referenceSlopeUpper = referenceSampleList.FindIndex(sample => sample > 0.4);
-
-            var syncSlopeLower = syncSampleList.FindIndex(sample => sample > 0.1 && sample < 0.2);
-            var syncSlopeUpper = syncSampleList.FindIndex(sample => sample > 0.4);
-
-            // No peaks found, save data and exit.
-            if (referenceSlopeUpper < 0 || syncSlopeUpper < 0)
-            {
-                path += " suspect";
-                referenceSampleArray = referenceSampleList.ToArray();
-                syncSampleArray = syncSampleList.ToArray();
-                break;
-            }
-
-            if (referenceSlopeLower < 32 || referenceSlopeUpper < 32 || syncSlopeLower < 32 || syncSlopeUpper < 32)
-            {
-                index += blockCount;
-                continue;
-            }
-
-            slopeFound = true;
-            var firstSampleIndex = -32 + (syncSlopeLower < referenceSlopeLower
-                ? syncSlopeLower
-                : referenceSlopeLower);
-
-            // Add enough samples to cover both.
-            var lastSampleIndex = (int)(sampleRate / pulseFrequency) + 32 + (referenceSlopeLower > syncSlopeLower
-                ? referenceSlopeLower
-                : syncSlopeLower);
-
-            // Some checks
-            if (firstSampleIndex < 0)
-            {
-                firstSampleIndex = 0;
-            }
-
-            var sampleCount = lastSampleIndex - firstSampleIndex;
-            if (sampleCount < 131) // = 5 ms
-            {
-                sampleCount = 131;
-            }
-
-            if (firstSampleIndex + sampleCount >= referenceSampleList.Count())
-            {
-                sampleCount = referenceSampleList.Count() - firstSampleIndex;
-            }
-
-            if (firstSampleIndex + sampleCount >= syncSampleList.Count())
-            {
-                sampleCount = syncSampleList.Count() - firstSampleIndex;
-            }
-
-            referenceSampleArray = new float[sampleCount];
-            syncSampleArray = new float[sampleCount];
-
-            referenceSampleList.CopyTo(firstSampleIndex, referenceSampleArray, 0, referenceSampleArray.Length);
-            syncSampleList.CopyTo(firstSampleIndex, syncSampleArray, 0, syncSampleArray.Length);
-            break;
-        }
-
-        if (slopeFound == false)
-        {
-            // at this stage the pulse could have died, dump the data and mark it as invalid.
-            path += " suspect";
-            referenceSampleArray = referenceSampleList.ToArray();
-            syncSampleArray = syncSampleList.ToArray();
-        }
+        (referenceSampleArray, syncSampleArray) = FindPulse(sampleRate, pulseFrequency, ref path, referenceSampleList, syncSampleList);
     }
     else
     {
@@ -347,4 +273,63 @@ int CheckTimeDifference(SystemTime system1Time, SystemTime system2Time)
     var dateTimeSystem1 = new DateTime(system1Time.Year, system1Time.Month, system1Time.Day, system1Time.Hour, system1Time.Minutes, system1Time.Seconds);
     var dateTimeSystem2 = new DateTime(system2Time.Year, system2Time.Month, system2Time.Day, system2Time.Hour, system2Time.Minutes, system2Time.Seconds);
     return Math.Abs((int)(dateTimeSystem1 - dateTimeSystem2).TotalSeconds);
+}
+
+static (float[] referenceSampleArray, float[] syncSampleArray) FindPulse(
+    int sampleRate,
+    double pulseFrequency,
+    ref string path,
+    List<float> referenceSampleList,
+    List<float> syncSampleList)
+{
+    var startIndex = 40;
+
+    // Find the first slope which is at least 32 samples delayed from the start.
+    // This makes pretty charts.
+    var referenceSlopeLower = referenceSampleList.FindIndex(startIndex, sample => sample > 0.1 && sample < 0.2); // Should be a few in this range
+    var referenceSlopeUpper = referenceSampleList.FindIndex(startIndex, sample => sample > 0.4);
+
+    var syncSlopeLower = syncSampleList.FindIndex(startIndex, sample => sample > 0.1 && sample < 0.2);
+    var syncSlopeUpper = syncSampleList.FindIndex(startIndex, sample => sample > 0.4);
+
+    // No peaks found, save data and exit.
+    if (referenceSlopeUpper < 0 || syncSlopeUpper < 0)
+    {
+        path += " suspect";
+        return (referenceSampleList.ToArray(), syncSampleList.ToArray());
+    }
+
+    var firstSampleIndex = -32 + (syncSlopeLower < referenceSlopeLower
+        ? syncSlopeLower
+        : referenceSlopeLower);
+
+    // Add enough samples to cover both.
+    var lastSampleIndex = (int)(sampleRate / pulseFrequency) + 32 + (referenceSlopeLower > syncSlopeLower
+        ? referenceSlopeLower
+        : syncSlopeLower);
+
+    // Some checks
+    var sampleCount = lastSampleIndex - firstSampleIndex;
+    var minimumSampleCount = (int)(sampleRate * 0.0015);
+    if (sampleCount < minimumSampleCount) // = 5 ms
+    {
+        sampleCount = minimumSampleCount;
+    }
+
+    if (firstSampleIndex + sampleCount >= referenceSampleList.Count())
+    {
+        sampleCount = referenceSampleList.Count() - firstSampleIndex;
+    }
+
+    if (firstSampleIndex + sampleCount >= syncSampleList.Count())
+    {
+        sampleCount = syncSampleList.Count() - firstSampleIndex;
+    }
+
+    var referenceSampleArray = new float[sampleCount];
+    var syncSampleArray = new float[sampleCount];
+
+    referenceSampleList.CopyTo(firstSampleIndex, referenceSampleArray, 0, referenceSampleArray.Length);
+    syncSampleList.CopyTo(firstSampleIndex, syncSampleArray, 0, syncSampleArray.Length);
+    return (referenceSampleArray, syncSampleArray);
 }

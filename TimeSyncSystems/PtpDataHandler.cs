@@ -2,63 +2,42 @@
 
 public class PtpDataHandler
 {
-    public static (List<float> referenceSampleList, List<float> syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem) 
-    {
-        // Find the first channel. It is not necessarily the first packet in the list, but it will have the lowest assigned ID.
-        var referenceChannelId = referenceSystem.AnalogDataPackets
-                                                .Select(packet => packet.GenericChannelHeader.ChannelId)
-                                                .Min();
+    private int _referenceChannelId = -1;
+    private int _syncChannelId = -1;
 
+    public PtpDataHandler(int referenceChannelId, int syncChannelId)
+    {
+        _referenceChannelId = referenceChannelId;
+        _syncChannelId = syncChannelId;
+    }
+
+    public (List<float> referenceSampleList, List<float> syncSampleList) GetDataBlock(DataStreamer referenceSystem, DataStreamer syncSystem) 
+    {
         var referencePackets = referenceSystem.AnalogDataPackets
-                                              .Where(packet => packet.GenericChannelHeader.ChannelId == referenceChannelId)
+                                              .Where(packet => packet.GenericChannelHeader.ChannelId == _referenceChannelId)
                                               .ToList();
 
-        var syncChannelId = syncSystem.AnalogDataPackets
-                                      .Select(packet => packet.GenericChannelHeader.ChannelId)
-                                      .Min();
-
         var syncPackets = syncSystem.AnalogDataPackets
-                                    .Where(packet => packet.GenericChannelHeader.ChannelId == syncChannelId)
+                                    .Where(packet => packet.GenericChannelHeader.ChannelId == _syncChannelId)
                                     .ToList();
 
-        // Next find the impulse on both channels.
-        var referenceTimestamp = 0ul;
-        for (int index = 0; index < referencePackets.Count; index++)
-        {
-            var packet = referencePackets[index];
-            if (packet.AnalogChannelHeader.Max < 0.1)
-            {
-                continue;
-            }
+        // Find the start and stop timestamp which exist in both streams.
+        var referenceTimestamp = referencePackets.First().GenericChannelHeader.Timestamp;
+        var syncTimestamp = syncPackets.First().GenericChannelHeader.Timestamp;
+        var startTimestamp = referenceTimestamp > syncTimestamp ? referenceTimestamp : syncTimestamp;
 
-            referenceTimestamp = packet.GenericChannelHeader.Timestamp;
-            break;
-        }
+        referenceTimestamp = referencePackets.Last().GenericChannelHeader.Timestamp;
+        syncTimestamp = syncPackets.Last().GenericChannelHeader.Timestamp;
+        var stopTimestamp = referenceTimestamp < syncTimestamp ? referenceTimestamp : syncTimestamp;
 
-        var syncTimestamp = 0ul;
-        for (int index = 0; index < syncPackets.Count; index++)
-        {
-            var packet = syncPackets[index];
-            if (packet.AnalogChannelHeader.Max < 0.1)
-            {
-                continue;
-            }
-
-            syncTimestamp = packet.GenericChannelHeader.Timestamp;
-            break;
-        }
-
-        var startTimestamp = referenceTimestamp < syncTimestamp ? referenceTimestamp : syncTimestamp;
-        var stopTimestamp = referenceTimestamp > syncTimestamp ? referenceTimestamp : syncTimestamp;
-
-        if (referencePackets.First().GenericChannelHeader.Timestamp > startTimestamp
-            || syncPackets.First().GenericChannelHeader.Timestamp > startTimestamp)
+        if (referencePackets.Any(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp) == false
+            || syncPackets.Any(packet => packet.GenericChannelHeader.Timestamp >= startTimestamp) == false)
         {
             throw new IndexOutOfRangeException("The start timestamp does not exist for both packet lists");
         }
 
-        if (referencePackets.Last().GenericChannelHeader.Timestamp < stopTimestamp
-            || syncPackets.Last().GenericChannelHeader.Timestamp < stopTimestamp)
+        if (referencePackets.Any(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp) == false
+            || syncPackets.Any(packet => packet.GenericChannelHeader.Timestamp <= stopTimestamp) == false)
         {
             throw new IndexOutOfRangeException("The stop timestamp does not exist for both packet lists");
         }
