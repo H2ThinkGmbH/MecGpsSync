@@ -20,7 +20,7 @@ foreach (var folder in Directory.EnumerateDirectories(rootFolder))
         if (File.Exists(csvFilePath))
         {
             var (_, channel1, channel2) = Csv.Parse(csvFilePath);
-            var delay = CalculateDelay.UsingCrossCorrelation(channel1, channel2, 65536, 256);
+            var delay = CalculateDelay.UsingCrossCorrelation(channel1, channel2, 131072, 131072);
             delayList.Add(new DataPoint() { Time = folderDateTime, Value = delay });
         }
         else
@@ -30,12 +30,20 @@ foreach (var folder in Directory.EnumerateDirectories(rootFolder))
     }
 }
 
+// Normalize the data
+var average = delayList.Select(point => point.Value).Average();
+for (int index = 0; index < delayList.Count; index++)
+{
+    delayList[index].Value -= average;
+    delayList[index].Value *= 1000000; // scale it to micro seconds
+}
+
 // Output the summary information
 Console.WriteLine($"Number of files found and processed: {delayList.Count()}");
 if (delayList.Any())
 {
-    Console.WriteLine($"Minimum delay: {delayList.Min(point => point.Value)} seconds");
-    Console.WriteLine($"Maximum delay: {delayList.Max(point => point.Value)} seconds");
+    Console.WriteLine($"Minimum delay: {delayList.Min(point => point.Value)} microseconds");
+    Console.WriteLine($"Maximum delay: {delayList.Max(point => point.Value)} microseconds");
 }
 
 // Plot the delay
@@ -57,7 +65,7 @@ static void PlotAndSave(List<DataPoint> dataPoints)
     // Customize the plot style
     plot.Title("Delay Over Time");
     plot.XLabel("Time in minutes");
-    plot.YLabel("Delay (s)");
+    plot.YLabel("Delay (µs)");
     plot.Legend(location: Alignment.UpperRight);
 
     // Save the plot as an image file within the specified folder
