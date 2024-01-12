@@ -224,35 +224,32 @@ do
     }
 
     // Display the data block
-    var thread = new Thread(() =>
-    {
-        var plot = new ScottPlot.Plot(1200, 800);
-        plot.AddSignal(referenceSampleArray, sampleRate, label: "Reference Channel");
-        plot.AddSignal(syncSampleArray, sampleRate, label: "Synchronized Channel");
-        plot.Legend();
-
-        plot.Title($"A common input signal measured by two systems with {(ptpSync ? "PTP" : "GPS")} synchronization enabled");
-        plot.XLabel("Time in seconds (s)");
-        plot.YLabel("Voltage (V)");
-
-        var fileName = Path.Combine(path, "Plot.png");
-        plot.SaveFig(fileName);
-
-        if (repeat == false)
-        {
-            new ScottPlot.FormsPlotViewer(plot).ShowDialog();
-        }
-    });
-
-    thread.SetApartmentState(ApartmentState.STA);
-    thread.Start();
-
     Console.WriteLine($"Sample taken at {timeSaved}");
     if (repeat == false)
     {
+
+        var thread = new Thread(() =>
+        {
+            var plot = new ScottPlot.Plot(1200, 800);
+            plot.AddSignal(referenceSampleArray, sampleRate, label: "Reference Channel");
+            plot.AddSignal(syncSampleArray, sampleRate, label: "Synchronized Channel");
+            plot.Legend();
+
+            plot.Title($"A common input signal measured by two systems with {(ptpSync ? "PTP" : "GPS")} synchronization enabled");
+            plot.XLabel("Time in seconds (s)");
+            plot.YLabel("Voltage (V)");
+
+            var fileName = Path.Combine(path, "Plot.png");
+            plot.SaveFig(fileName);
+            new ScottPlot.FormsPlotViewer(plot).ShowDialog();
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
         thread.Join();
     }
 
+    // Continue to save data.
     while ((timer.ElapsedMilliseconds - timestamp) < 5 * 60 * 1000)
     {
         Thread.Sleep(250);
@@ -264,9 +261,6 @@ do
 
     timestamp = timer.ElapsedMilliseconds;
 } while (repeat);
-
-
-
 
 int CheckTimeDifference(SystemTime system1Time, SystemTime system2Time)
 {

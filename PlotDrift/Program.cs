@@ -20,7 +20,7 @@ foreach (var folder in Directory.EnumerateDirectories(rootFolder))
         if (File.Exists(csvFilePath))
         {
             var (_, channel1, channel2) = Csv.Parse(csvFilePath);
-            var delay = CalculateDelay.UsingCrossCorrelation(channel1, channel2, 131072, 131072);
+            var delay = CalculateDelay.UsingCrossCorrelation(channel1, channel2, 131072/2, 131072/2);
             delayList.Add(new DataPoint() { Time = folderDateTime, Value = delay });
         }
         else
@@ -31,19 +31,23 @@ foreach (var folder in Directory.EnumerateDirectories(rootFolder))
 }
 
 // Normalize the data
-var average = delayList.Select(point => point.Value).Average();
 for (int index = 0; index < delayList.Count; index++)
 {
-    delayList[index].Value -= average;
     delayList[index].Value *= 1000000; // scale it to micro seconds
 }
+
+// Calculate stats
+var average = delayList.Select(point => point.Value).Average();
+var sumOfSquareDifferences = delayList.Select(point => (point.Value - average) * (point.Value - average)).Sum();
+var standardDeviation = Math.Sqrt(sumOfSquareDifferences / delayList.Count());
 
 // Output the summary information
 Console.WriteLine($"Number of files found and processed: {delayList.Count()}");
 if (delayList.Any())
 {
-    Console.WriteLine($"Minimum delay: {delayList.Min(point => point.Value)} microseconds");
-    Console.WriteLine($"Maximum delay: {delayList.Max(point => point.Value)} microseconds");
+    Console.WriteLine($"Average: {average} µs, STDEV: {standardDeviation} µs");
+    Console.WriteLine($"Minimum delay: {delayList.Min(point => point.Value)} µs");
+    Console.WriteLine($"Maximum delay: {delayList.Max(point => point.Value)} µs");
 }
 
 // Plot the delay
@@ -63,10 +67,10 @@ static void PlotAndSave(List<DataPoint> dataPoints)
     plot.AddScatter(timeValues, delayValues);
 
     // Customize the plot style
-    plot.Title("Delay Over Time");
-    plot.XLabel("Time in minutes");
-    plot.YLabel("Delay (µs)");
-    plot.Legend(location: Alignment.UpperRight);
+    plot.Title("System time delay over time period measured with GPS enabled", size: 24);
+    plot.XAxis.Label("Time in minutes", size: 20);
+    plot.YAxis.Label("Delay (µs)", size: 20);
+    plot.Legend(location: Alignment.LowerRight);
 
     // Save the plot as an image file within the specified folder
     var outputDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Result");
