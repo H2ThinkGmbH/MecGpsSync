@@ -9,6 +9,7 @@ using QProtocol;
 using QProtocol.Advanced;
 using QProtocol.Controllers;
 using QProtocol.GenericDefines;
+using QProtocol.InternalChannels.XMC237;
 using QProtocol.InternalModules.ICS;
 using System;
 using System.Diagnostics;
@@ -18,15 +19,15 @@ using TimeSyncSystems;
 Console.WriteLine($"Mecalc Time Sync Systems {Assembly.GetExecutingAssembly().GetName().Version}");
 
 var checkSystemTime = false;
-var ptpSync = true;
+var ptpSync = false;
 var scopePulse = true;
-var repeat = true;
+var repeat = false;
 
 var sampleRate = 131072 / 2;
 var pulseFrequency = 2048.0;
 
 // First connect to the separate systems
-var ipSystem1 = "192.168.100.52";
+var ipSystem1 = "192.168.100.32";
 var system1RestfulInterface = new RestfulInterface($"http://{ipSystem1}:8080");
 var pingResponse = system1RestfulInterface.Get<InfoPing>(EndPoints.InfoPing);
 if (pingResponse == null || pingResponse.Code < 0)
@@ -34,7 +35,7 @@ if (pingResponse == null || pingResponse.Code < 0)
     Console.WriteLine("Unable to ping system 1");
 }
 
-var ipSystem2 = "192.168.100.44"; //"169.254.28.242";
+var ipSystem2 = "192.168.100.36"; //"169.254.28.242";
 var system2RestfulInterface = new RestfulInterface($"http://{ipSystem2}:8080");
 pingResponse = system2RestfulInterface.Get<InfoPing>(EndPoints.InfoPing);
 if (pingResponse == null || pingResponse.Code < 0)
@@ -106,6 +107,18 @@ foreach (var channel in system1Channels)
     channel.PutItemSettings(channelSettings);
 }
 
+if (controller.ItemNameIdentifier == (int)Types.ControllerType.MicroQ)
+{
+    var xmc237Module = system1Items.OfType<XMC237Module>().First();
+    var xmc237GpsChannel = xmc237Module.Children.OfType<XMC237GpsChannel>().First();
+
+    xmc237GpsChannel.PutItemOperationMode(XMC237GpsChannel.OperationMode.Enabled);
+    var channelSettings = xmc237GpsChannel.GetItemSettings<XMC237GpsChannel.EnabledSettings>();
+    channelSettings.Settings.MessageRate = XMC237GpsChannel.MessageRate._1Hz;
+    channelSettings.Data.StreamingState = Generic.Status.Enabled;
+    xmc237GpsChannel.PutItemSettings(channelSettings);
+}
+
 // Repeat for system 2.
 var system2Items = Item.CreateList(system2RestfulInterface);
 var controller2 = (Controller)system2Items.First();
@@ -144,6 +157,18 @@ foreach (var channel in system2Channels)
     }
 
     channel.PutItemSettings(channelSettings);
+}
+
+if (controller2.ItemNameIdentifier == (int)Types.ControllerType.MicroQ)
+{
+    var xmc237Module = system2Items.OfType<XMC237Module>().First();
+    var xmc237GpsChannel = xmc237Module.Children.OfType<XMC237GpsChannel>().First();
+
+    xmc237GpsChannel.PutItemOperationMode(XMC237GpsChannel.OperationMode.Enabled);
+    var channelSettings = xmc237GpsChannel.GetItemSettings<XMC237GpsChannel.EnabledSettings>();
+    channelSettings.Settings.MessageRate = XMC237GpsChannel.MessageRate._1Hz;
+    channelSettings.Data.StreamingState = Generic.Status.Enabled;
+    xmc237GpsChannel.PutItemSettings(channelSettings);
 }
 
 var applyTask1 = Task.Factory.StartNew(() => system1RestfulInterface.Put(EndPoints.SystemSettingsApply));
@@ -191,7 +216,7 @@ do
     }
     else
     {
-        var gpsDataHandler = new GpsDataHandler(referenceChannelId, syncChannelId);
+        var gpsDataHandler = new GpsDataHandler(referenceChannelId, syncChannelId, sampleRate);
         (referenceSampleList, syncSampleList) = gpsDataHandler.GetDataBlock(system1Streamer, system2Streamer);
     }
 
@@ -227,7 +252,6 @@ do
     Console.WriteLine($"Sample taken at {timeSaved}");
     if (repeat == false)
     {
-
         var thread = new Thread(() =>
         {
             var plot = new ScottPlot.Plot(1200, 800);
@@ -247,6 +271,13 @@ do
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         thread.Join();
+
+        while (thread.IsAlive)
+        {
+            Thread.Sleep(25);
+        }
+
+        Environment.Exit(0);
     }
 
     // Continue to save data.
@@ -261,6 +292,7 @@ do
 
     timestamp = timer.ElapsedMilliseconds;
 } while (repeat);
+
 
 int CheckTimeDifference(SystemTime system1Time, SystemTime system2Time)
 {
