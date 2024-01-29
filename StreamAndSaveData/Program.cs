@@ -30,7 +30,7 @@ foreach (var channel in channelList)
 }
 
 WriteTextToTop($"Start streaming...");
-var dataWriter = new DataWriter(Path.Combine(Directory.GetCurrentDirectory(), $"{DateTime.Now:yyyyMMdd HHmmss}"), sampleRate);
+var dataWriter = new DataWriter(Path.Combine(Directory.GetCurrentDirectory(), "Data", $"{DateTime.Now:yyyyMMdd HHmmss}"), sampleRate);
 var dataStreamer = new DataStreamer(systemRestfulInterface, streamingChannels);
 dataStreamer.StartStreaming();
 

@@ -11,7 +11,7 @@ public class GetIpAddresses
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "QDeviceDiscovery.exe",
+                FileName = Path.Combine("Libraries", "QDeviceDiscovery.exe"),
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 CreateNoWindow = true
