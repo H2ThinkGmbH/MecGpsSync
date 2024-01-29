@@ -31,25 +31,36 @@ Console.ReadKey();
 static void PlotAndSave(double[] referenceSamples, double[] syncSamples, double sampleRate)
 {
     // Create a new ScottPlot plot
-    var plot = new Plot(1200, 800);
-    plot.AddSignal(referenceSamples, sampleRate / 1000, label: "Reference Channel");
-    plot.AddSignal(syncSamples, sampleRate / 1000, label: "Synchronized Channel");
+    var plot = new Plot();
+    var referenceSignal = plot.Add.Signal(referenceSamples, 1000 / sampleRate);
+    referenceSignal.Label = "Reference Channel";
+    referenceSignal.MaximumMarkerSize = 20;
+    referenceSignal.Marker.IsVisible = true;
+    referenceSignal.Marker.Shape = MarkerShape.FilledCircle;
+
+    var syncSignal = plot.Add.Signal(syncSamples, 1000 / sampleRate);
+    syncSignal.Label = "Synchronized Channel";
+    syncSignal.MaximumMarkerSize = 20;
+    syncSignal.Marker.IsVisible = true;
+    syncSignal.Marker.Shape = MarkerShape.FilledCircle;
 
     // Customize the plot style
     plot.Title("Time delay measured between two DAQ systems with PTP enabled", size: 24);
-    plot.XAxis.Label("Time in milliseconds (ms)", size: 20);
-    plot.YAxis.Label("Voltage (V)", size: 20);
-    plot.Legend(location: Alignment.LowerRight);
+    plot.XLabel("Time in milliseconds (ms)", size: 20);
+    plot.YLabel("Voltage (V)", size: 20);
+
+    plot.Legend.IsVisible = true;
+    plot.Legend.Location = Alignment.LowerRight;
 
     // Save the plot as an image file within the specified folder
     var outputDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Result");
-    string fileFullPath = Path.Combine(outputDirectory, $"DelayPlot.png");
+    string fileFullPath = Path.Combine(outputDirectory, $"DelayPlot.svg");
     if (Directory.Exists(outputDirectory) == false)
     {
         Directory.CreateDirectory(outputDirectory);
     }
 
-    plot.SaveFig(fileFullPath);
+    plot.SaveSvg(fileFullPath, 1200, 800);
 
     // Notify the user where the plot has been saved
     Console.WriteLine($"Plot saved to: {fileFullPath}");

@@ -57,30 +57,30 @@ Console.ReadKey();
 static void PlotAndSave(List<DataPoint> dataPoints)
 {
     // Create a new ScottPlot plot
-    var plot = new Plot(1200, 800);
+    var plot = new Plot();
 
     // Add both the original time series and delay time series to the plot
     var firstTimeSample = dataPoints.First().Time;
     var timeValues = dataPoints.Select(point => (point.Time - firstTimeSample).TotalMinutes)
                                .ToArray();
     var delayValues = dataPoints.Select(point => point.Value).ToArray();
-    plot.AddScatter(timeValues, delayValues);
+    plot.Add.Scatter(timeValues, delayValues);
 
     // Customize the plot style
     plot.Title("System time delay over time period measured with GPS enabled", size: 24);
-    plot.XAxis.Label("Time in minutes", size: 20);
-    plot.YAxis.Label("Delay (µs)", size: 20);
-    plot.Legend(location: Alignment.LowerRight);
+    plot.XLabel("Time in minutes", size: 20);
+    plot.YLabel("Delay (µs)", size: 20);
+    plot.Legend.Location = Alignment.LowerRight;
 
     // Save the plot as an image file within the specified folder
     var outputDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Result");
-    string fileFullPath = Path.Combine(outputDirectory, $"DelayPlot.png");
+    string fileFullPath = Path.Combine(outputDirectory, $"DelayPlot.svg");
     if (Directory.Exists(outputDirectory) == false)
     {
         Directory.CreateDirectory(outputDirectory);
     }
 
-    plot.SaveFig(fileFullPath);
+    plot.SaveSvg(fileFullPath, 1200, 800);
 
     // Notify the user where the plot has been saved
     Console.WriteLine($"Plot saved to: {fileFullPath}");
