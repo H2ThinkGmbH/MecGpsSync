@@ -49,10 +49,10 @@ foreach (var ipAddress in ipList)
 
     foreach (var channel in channels)
     {
-        channel.PutItemOperationMode(ICS425Channel.OperationMode.VoltageInput);
-        var channelSettings = channel.GetItemSettings<ICS425Channel.VoltageInputSettings>();
+        channel.PutItemOperationMode(ICS425Channel.OperationMode.IcpInput);
+        var channelSettings = channel.GetItemSettings<ICS425Channel.IcpInputSettings>();
         channelSettings.Settings.VoltageRange = ICS425Channel.VoltageRange._1V;
-        channelSettings.Settings.VoltageInputCoupling = ICS425Channel.VoltageInputCoupling.Dc;
+        channelSettings.Settings.IcpInputCoupling = ICS425Channel.IcpInputCoupling.AcWith1HzFilter;
         channelSettings.Settings.InputBiasing = ICS425Channel.InputBiasing.SingleEnded;
         channelSettings.Data.StreamingState = Generic.Status.Enabled;
         if (channelSettings.Data.LocalStorage != null)
@@ -64,15 +64,20 @@ foreach (var ipAddress in ipList)
     }
 
     var xmc237Module = itemList.OfType<XMC237Module>().First();
-    var xmc237GpsChannel = xmc237Module.Children.OfType<XMC237GpsChannel>().First();
-
     xmc237Module.PutItemOperationMode(XMC237Module.OperationMode.Enabled);
 
+    var xmc237GpsChannel = xmc237Module.Children.OfType<XMC237GpsChannel>().First();
     xmc237GpsChannel.PutItemOperationMode(XMC237GpsChannel.OperationMode.Enabled);
     var gpsChannelSettings = xmc237GpsChannel.GetItemSettings<XMC237GpsChannel.EnabledSettings>();
     gpsChannelSettings.Settings.MessageRate = XMC237GpsChannel.MessageRate._1Hz;
     gpsChannelSettings.Data.StreamingState = Generic.Status.Enabled;
     xmc237GpsChannel.PutItemSettings(gpsChannelSettings);
+
+    if (xmc237Module.Children.Any(item => item.ItemNameIdentifier == (int)Types.ChannelType.XMC237Icp))
+    {
+        var xmc237IcpChannel = xmc237Module.Children.OfType<XMC237IcpChannel>().First();
+        xmc237IcpChannel.PutItemOperationMode(XMC237IcpChannel.OperationMode.Disabled);
+    }
 
     Console.WriteLine($"Appling settings");
     restfulInterface.Put(EndPoints.SystemSettingsApply);
