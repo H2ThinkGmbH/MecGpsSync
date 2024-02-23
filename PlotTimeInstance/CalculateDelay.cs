@@ -4,28 +4,33 @@ namespace PlotDrift;
 
 public static class CalculateDelay
 {
-    public static double UsingCrossCorrelation(double[] channel1, double[] channel2, double sampleRate, int fftLength)
+    public static List<double> UsingCrossCorrelation(double[] channel1, double[] channel2, int binSize)
     {
         // Ensure the length of both channels is a power of 2
-        var fft1 = FFT(channel1, fftLength);
-        var fft2 = FFT(channel2, fftLength);
+        var fft1 = FFT(channel1, binSize);
+        var fft2 = FFT(channel2, binSize);
 
         // Conjugate and multiply
-        var crossCorrelation = new Complex[fftLength];
-        for (int index = 0; index < fftLength; index++)
+        var crossCorrelation = new Complex[binSize];
+        for (int index = 0; index < binSize; index++)
         {
             crossCorrelation[index] = fft1[index] * Complex.Conjugate(fft2[index]);
         }
 
         // Inverse FFT to get the cross-correlation series
         FftSharp.FFT.Inverse(crossCorrelation);
+        var maxValue = crossCorrelation.Max(value => value.Magnitude);
+        return crossCorrelation.Select(value => value.Magnitude / maxValue).ToList();
+    }
 
+    public static double TimeValue(List<double> values, int binSize, double sampleRate)
+    {
         // Find the index of the maximum value in cross-correlation
-        var maxIndex = Array.IndexOf(crossCorrelation.Select(x => x.Magnitude).ToArray(), crossCorrelation.Max(x => x.Magnitude));
+        var maxIndex = values.IndexOf(values.Max());
 
         // Convert index to time delay (consider FFT shift for correct direction)
-        var shift = maxIndex > fftLength / 2 ? maxIndex - fftLength : maxIndex;
-        return -shift / sampleRate;
+        var shift = maxIndex > binSize / 2 ? maxIndex - binSize : maxIndex;
+        return -shift / (double)sampleRate;
     }
 
     private static Complex[] FFT(double[] data, int fftLength)

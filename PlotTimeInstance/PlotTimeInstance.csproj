@@ -9,8 +9,8 @@
 
   <ItemGroup>
     <PackageReference Include="FftSharp" Version="2.1.0" />
-    <PackageReference Include="ScottPlot" Version="4.1.70" />
-    <PackageReference Include="ScottPlot.WinForms" Version="4.1.70" />
+    <PackageReference Include="ScottPlot" Version="5.0.21" />
+    <PackageReference Include="ScottPlot.WinForms" Version="5.0.21" />
   </ItemGroup>
 
 </Project>
