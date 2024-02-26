@@ -2,6 +2,7 @@
 using ScottPlot;
 
 string rootFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data");
+const string fontName = "Times New Roman";
 
 // Define the culture for parsing dates in the folder name
 var sampleRate = 65536.0;
@@ -49,12 +50,23 @@ static Plot PlotTimeValues(double[] referenceSamples, double[] syncSamples, doub
     signalProperties.Label = "System 2 Channel";
 
     // Customize the plot style
-    plot.Title("Time delay measured between two DAQ systems", size: 32);
-    plot.XLabel("Time in milliseconds (ms)", size: 28);
-    plot.YLabel("Voltage (V)", size: 28);
-    plot.Legend.Location = Alignment.LowerRight;
+    plot.Title("Time delay measured between two DAQ systems", size: 36);
+    plot.Axes.Title.Label.FontName = fontName;
+
+    plot.XLabel("Time in milliseconds (ms)", size: 32);
+    plot.Axes.Bottom.Label.FontName = fontName;
+    plot.Axes.Bottom.TickLabelStyle.FontSize = 20;
+    plot.Axes.Bottom.TickLabelStyle.FontName = fontName;
+
+    plot.YLabel("Voltage (V)", size: 32);
+    plot.Axes.Left.Label.FontName = fontName;
+    plot.Axes.Left.TickLabelStyle.FontSize = 20;
+    plot.Axes.Left.TickLabelStyle.FontName = fontName;
+
     plot.Legend.IsVisible = true;
-    plot.Legend.Font = new FontStyle() { Size = 16 };
+    plot.Legend.Location = Alignment.LowerRight;
+    plot.Legend.Font.Size = 28;
+    plot.Legend.Font.Name = fontName;
     return plot;
 }
 
@@ -66,9 +78,18 @@ static Plot PlotCorrelationValues(List<double> samples)
     signalProperties.Label = "DFT Cross-correlation";
 
     // Customize the plot style
-    plot.Title("Time delay visualised using cross-correlation", size: 32);
-    plot.XLabel("Delay bin", size: 28);
-    plot.YLabel("Correlation Coeficient", size: 28);
+    plot.Title("Time delay visualised using cross-correlation", size: 36);
+    plot.Axes.Title.Label.FontName = fontName;
+
+    plot.XLabel("Delay bin", size: 32);
+    plot.Axes.Bottom.Label.FontName = fontName;
+    plot.Axes.Bottom.TickLabelStyle.FontSize = 20;
+    plot.Axes.Bottom.TickLabelStyle.FontName = fontName;
+
+    plot.YLabel("Correlation Coeficient", size: 32);
+    plot.Axes.Left.Label.FontName = fontName;
+    plot.Axes.Left.TickLabelStyle.FontSize = 20;
+    plot.Axes.Left.TickLabelStyle.FontName = fontName;
     return plot;
 }
 
@@ -82,8 +103,8 @@ static void SavePlot(Plot plot, string fileName)
         Directory.CreateDirectory(outputDirectory);
     }
 
-    plot.SaveSvg(fileFullPath + ".svg", 1200, 800);
-    plot.SavePng(fileFullPath + ".png", 1200, 800);
+    plot.SaveSvg(fileFullPath + ".svg", 1400, 700);
+    plot.SavePng(fileFullPath + ".png", 1400, 700);
 
     // Notify the user where the plot has been saved
     Console.WriteLine($"Plot saved to: {fileFullPath}");
